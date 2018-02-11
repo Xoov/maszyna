@@ -11,8 +11,9 @@ http://mozilla.org/MPL/2.0/.
 
 #include "audio.h"
 #include "globals.h"
-#include "mczapkie/mctools.h"
+#include "utilities.h"
 #include "logs.h"
+#include "resourcemanager.h"
 
 #define DR_WAV_IMPLEMENTATION
 #include "dr_wav.h"
@@ -29,16 +30,21 @@ openal_buffer::openal_buffer( std::string const &Filename ) :
     if( Filename.substr( Filename.rfind( '.' ) ) == ".wav" ) {
         // .wav file
         auto *file { drwav_open_file( Filename.c_str() ) };
-        rate = file->sampleRate;
-        auto const samplecount { static_cast<std::size_t>( file->totalSampleCount ) };
-        data.resize( samplecount );
-        drwav_read_s16(
-            file,
-            samplecount,
-            &data[ 0 ] );
-        if( file->channels > 1 ) {
-            narrow_to_mono( file->channels );
-            data.resize( samplecount / file->channels );
+        if( file != nullptr ) {
+            rate = file->sampleRate;
+            auto const samplecount{ static_cast<std::size_t>( file->totalSampleCount ) };
+            data.resize( samplecount );
+            drwav_read_s16(
+                file,
+                samplecount,
+                &data[ 0 ] );
+            if( file->channels > 1 ) {
+                narrow_to_mono( file->channels );
+                data.resize( samplecount / file->channels );
+            }
+        }
+        else {
+            ErrorLog( "Bad file: failed do load audio file \"" + Filename + "\"", logtype::file );
         }
         // we're done with the disk data
         drwav_close( file );
@@ -46,25 +52,33 @@ openal_buffer::openal_buffer( std::string const &Filename ) :
     else {
         // .flac or .ogg file
         auto *file { drflac_open_file( Filename.c_str() ) };
-        rate = file->sampleRate;
-        auto const samplecount{ static_cast<std::size_t>( file->totalSampleCount ) };
-        data.resize( samplecount );
-        drflac_read_s16(
-            file,
-            samplecount,
-            &data[ 0 ] );
-        if( file->channels > 1 ) {
-            narrow_to_mono( file->channels );
-            data.resize( samplecount / file->channels );
+        if( file != nullptr ) {
+            rate = file->sampleRate;
+            auto const samplecount{ static_cast<std::size_t>( file->totalSampleCount ) };
+            data.resize( samplecount );
+            drflac_read_s16(
+                file,
+                samplecount,
+                &data[ 0 ] );
+            if( file->channels > 1 ) {
+                narrow_to_mono( file->channels );
+                data.resize( samplecount / file->channels );
+            }
+        }
+        else {
+            ErrorLog( "Bad file: failed do load audio file \"" + Filename + "\"", logtype::file );
         }
         // we're done with the disk data
         drflac_close( file );
     }
-    // send the data to openal side
-    ::alBufferData( id, AL_FORMAT_MONO16, data.data(), data.size() * sizeof( std::int16_t ), rate );
-    // and get rid of the source, we shouldn't need it anymore
-    // TBD, TODO: delay data fetching and transfers until the buffer is actually used?
-    std::vector<std::int16_t>().swap( data );
+    if( false == data.empty() ) {
+        // send the data to openal side
+        ::alBufferData( id, AL_FORMAT_MONO16, data.data(), data.size() * sizeof( std::int16_t ), rate );
+        // and get rid of the source, we shouldn't need it anymore
+        // TBD, TODO: delay data fetching and transfers until the buffer is actually used?
+        std::vector<std::int16_t>().swap( data );
+    }
+    fetch_caption();
 }
 
 // mix specified number of interleaved multi-channel data, down to mono
@@ -84,6 +98,20 @@ openal_buffer::narrow_to_mono( std::uint16_t const Channelcount ) {
             accumulator = 0;
             channelcount = Channelcount;
         }
+    }
+}
+
+// retrieves sound caption in currently set language
+void
+openal_buffer::fetch_caption() {
+
+    std::string captionfilename { name };
+    captionfilename.erase( captionfilename.rfind( '.' ) ); // obcięcie rozszerzenia
+    captionfilename += "-" + Global.asLang + ".txt"; // już może być w różnych językach
+    if( true == FileExists( captionfilename ) ) {
+        // wczytanie
+        std::ifstream inputfile( captionfilename );
+        caption.assign( std::istreambuf_iterator<char>( inputfile ), std::istreambuf_iterator<char>() );
     }
 }
 
@@ -117,13 +145,13 @@ buffer_manager::create( std::string const &Filename ) {
 
     audio::buffer_handle lookup { null_handle };
     std::string filelookup;
-    if( false == Global::asCurrentDynamicPath.empty() ) {
+    if( false == Global.asCurrentDynamicPath.empty() ) {
         // try dynamic-specific sounds first
-        lookup = find_buffer( Global::asCurrentDynamicPath + filename );
+        lookup = find_buffer( Global.asCurrentDynamicPath + filename );
         if( lookup != null_handle ) {
             return lookup;
         }
-        filelookup = find_file( Global::asCurrentDynamicPath + filename );
+        filelookup = find_file( Global.asCurrentDynamicPath + filename );
         if( false == filelookup.empty() ) {
             return emplace( filelookup );
         }
@@ -149,7 +177,7 @@ buffer_manager::create( std::string const &Filename ) {
         return emplace( filelookup );
     }
     // if we still didn't find anything, give up
-    ErrorLog( "Bad file: failed do locate audio file \"" + Filename + "\"" );
+    ErrorLog( "Bad file: failed do locate audio file \"" + Filename + "\"", logtype::file );
     return null_handle;
 }
 

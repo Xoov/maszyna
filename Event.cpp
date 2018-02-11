@@ -17,6 +17,7 @@ http://mozilla.org/MPL/2.0/.
 #include "event.h"
 
 #include "simulation.h"
+#include "world.h"
 #include "globals.h"
 #include "timer.h"
 #include "logs.h"
@@ -49,10 +50,10 @@ TEvent::~TEvent() {
             SafeDeleteArray(Params[10].asText);
         break;
     case tp_Animation: // nic
-        // SafeDeleteArray(Params[9].asText); //nie usuwać - nazwa jest zamieniana na wskaźnik do
-        // submodelu
+        // SafeDeleteArray(Params[9].asText); //nie usuwać - nazwa jest zamieniana na wskaźnik do submodelu
         if (Params[0].asInt == 4) // jeśli z pliku VMD
             SafeDeleteArray( Params[8].asPointer ); // zwolnić obszar
+        break;
     case tp_GetValues: // nic
         break;
 	case tp_PutValues: // params[0].astext stores the token
@@ -780,7 +781,7 @@ event_manager::insert( TEvent *Event ) {
         }
 
         auto *duplicate = m_events[ lookup->second ];
-        if( Global::bJoinEvents ) {
+        if( Global.bJoinEvents ) {
             // doczepka (taki wirtualny multiple bez warunków)
             duplicate->Append( Event );
         }
@@ -959,7 +960,7 @@ event_manager::CheckQuery() {
             case tp_GetValues: {
                 if( m_workevent->Activator ) {
                     // TODO: re-enable when messaging module is in place
-                    if( Global::iMultiplayer ) {
+                    if( Global.iMultiplayer ) {
                         // potwierdzenie wykonania dla serwera (odczyt semafora już tak nie działa)
                         multiplayer::WyslijEvent( m_workevent->asName, m_workevent->Activator->name() );
                     }
@@ -1010,7 +1011,7 @@ event_manager::CheckQuery() {
             }
             case tp_Visible: {
                 if( m_workevent->Params[ 9 ].asEditorNode )
-                    m_workevent->Params[ 9 ].asEditorNode->visible( m_workevent->Params[ i ].asInt > 0 );
+                    m_workevent->Params[ 9 ].asEditorNode->visible( m_workevent->Params[ 0 ].asInt > 0 );
                 break;
             }
             case tp_Velocity: {
@@ -1019,7 +1020,7 @@ event_manager::CheckQuery() {
             }
             case tp_Exit: {
                 MessageBox( 0, m_workevent->asNodeName.c_str(), " THE END ", MB_OK );
-                Global::iTextMode = -1; // wyłączenie takie samo jak sekwencja F10 -> Y
+                Global.iTextMode = -1; // wyłączenie takie samo jak sekwencja F10 -> Y
                 return false;
             }
             case tp_Sound: {
@@ -1034,17 +1035,17 @@ event_manager::CheckQuery() {
                     }
                     case 1: {
                         if( m_workevent->Params[ 1 ].asdouble > 0.0 ) {
-                            Global::pWorld->radio_message(
+                            Global.pWorld->radio_message(
                                 m_workevent->Params[ 9 ].tsTextSound,
                                 static_cast<int>( m_workevent->Params[ 1 ].asdouble ) );
                         }
                         else {
-                            m_workevent->Params[ 9 ].tsTextSound->play( sound_flags::exclusive );
+                            m_workevent->Params[ 9 ].tsTextSound->play( sound_flags::exclusive | sound_flags::event );
                         }
                         break;
                     }
                     case -1: {
-                        m_workevent->Params[ 9 ].tsTextSound->play( sound_flags::exclusive | sound_flags::looping );
+                        m_workevent->Params[ 9 ].tsTextSound->play( sound_flags::exclusive | sound_flags::looping | sound_flags::event );
                         break;
                     }
                     default: {
@@ -1098,7 +1099,7 @@ event_manager::CheckQuery() {
                         m_workevent->Params[ 1 ].asdouble,
                         m_workevent->Params[ 2 ].asdouble );
                 }
-                if( Global::iMultiplayer ) {
+                if( Global.iMultiplayer ) {
                     // dajemy znać do serwera o przełożeniu
                     multiplayer::WyslijEvent( m_workevent->asName, "" ); // wysłanie nazwy eventu przełączajacego
                 }
@@ -1141,7 +1142,7 @@ event_manager::CheckQuery() {
                             }
                         }
                     }
-                    if( Global::iMultiplayer ) {
+                    if( Global.iMultiplayer ) {
                         // dajemy znać do serwera o wykonaniu
                         if( ( m_workevent->iFlags & conditional_anyelse ) == 0 ) {
                             // jednoznaczne tylko, gdy nie było else
@@ -1255,7 +1256,7 @@ event_manager::CheckQuery() {
             case tp_Friction: // zmiana tarcia na scenerii
             { // na razie takie chamskie ustawienie napięcia zasilania
                 WriteLog("Type: Friction");
-                Global::fFriction = (m_workevent->Params[0].asdouble);
+                Global.fFriction = (m_workevent->Params[0].asdouble);
             }
             break;
             case tp_Message: // wyświetlenie komunikatu
@@ -1426,8 +1427,10 @@ event_manager::InitEvents() {
             }
             if( node != nullptr )
                 event->Params[ 9 ].asEditorNode = node;
-            else
+            else {
+                event->m_ignored = true;
                 ErrorLog( "Bad event: visibility event \"" + event->asName + "\" cannot find item \"" + event->asNodeName + "\"" );
+            }
             event->asNodeName = "";
             break;
         }
@@ -1436,7 +1439,7 @@ event_manager::InitEvents() {
             auto *track = simulation::Paths.find( event->asNodeName );
             if( track != nullptr ) {
                 // dowiązanie toru
-                if( track->iAction == NULL ) {
+                if( track->iAction == 0 ) {
                     // jeśli nie jest zwrotnicą ani obrotnicą to będzie się zmieniał stan uszkodzenia
                     track->iAction |= 0x100;
                 }

@@ -11,6 +11,7 @@ http://mozilla.org/MPL/2.0/.
 
 #include "audio.h"
 #include "resourcemanager.h"
+#include "uitranscripts.h"
 
 class sound_source;
 
@@ -162,8 +163,11 @@ openal_source::bind( sound_source *Controller, uint32_sequence Sounds, Iterator_
     std::vector<ALuint> buffers;
     std::for_each(
         First, Last,
-        [&]( audio::buffer_handle const &buffer ) {
-            buffers.emplace_back( audio::renderer.buffer( buffer ).id ); } );
+        [&]( audio::buffer_handle const &bufferhandle ) {
+            auto const &buffer { audio::renderer.buffer( bufferhandle ) };
+            buffers.emplace_back( buffer.id );
+            if( false == buffer.caption.empty() ) {
+                ui::Transcripts.Add( buffer.caption ); } } );
 
     if( id != audio::null_resource ) {
         ::alSourceQueueBuffers( id, static_cast<ALsizei>( buffers.size() ), buffers.data() );

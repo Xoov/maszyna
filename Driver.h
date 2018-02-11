@@ -9,13 +9,10 @@ http://mozilla.org/MPL/2.0/.
 
 #pragma once
 
-//#include <fstream>
-#include "Classes.h"
-#include "dumb3d.h"
-#include "mczapkie/mover.h"
 #include <string>
-using namespace Math3D;
-using namespace Mtable;
+#include "Classes.h"
+#include "mczapkie/mover.h"
+#include "sound.h"
 
 enum TOrders
 { // rozkazy dla AI
@@ -134,7 +131,7 @@ class TSpeedPos
     // zwrotnicy,32-minięty,64=koniec,128=łuk
     // 0x100=event,0x200=manewrowa,0x400=przystanek,0x800=SBL,0x1000=wysłana komenda,0x2000=W5
     // 0x4000=semafor,0x10000=zatkanie
-    vector3 vPos; // współrzędne XYZ do liczenia odległości
+    Math3D::vector3 vPos; // współrzędne XYZ do liczenia odległości
     struct
     {
         TTrack *trTrack{ nullptr }; // wskaźnik na tor o zmiennej prędkości (zwrotnica, obrotnica)
@@ -152,7 +149,7 @@ class TSpeedPos
     inline
     void
         UpdateDistance( double dist ) {
-        fDist -= dist; }
+            fDist -= dist; }
     bool Set(TEvent *e, double d, TOrders order = Wait_for_orders);
     void Set(TTrack *t, double d, int f);
     std::string TableText();
@@ -209,7 +206,6 @@ public:
 	double BrakeAccFactor();
 	double fBrakeReaction = 1.0; //opóźnienie zadziałania hamulca - czas w s / (km/h)
     double fAccThreshold = 0.0; // próg opóźnienia dla zadziałania hamulca
-    double AbsAccS_avg = 0.0; // averaged out directional acceleration
 	double AbsAccS_pub = 0.0; // próg opóźnienia dla zadziałania hamulca
 	double fBrake_a0[BrakeAccTableSize+1] = { 0.0 }; // próg opóźnienia dla zadziałania hamulca
 	double fBrake_a1[BrakeAccTableSize+1] = { 0.0 }; // próg opóźnienia dla zadziałania hamulca
@@ -225,7 +221,7 @@ private:
     double LastReactionTime = 0.0;
     double fActionTime = 0.0; // czas używany przy regulacji prędkości i zamykaniu drzwi
     double m_radiocontroltime{ 0.0 }; // timer used to control speed of radio operations
-    TAction eAction = actSleep; // aktualny stan
+    TAction eAction { actUnknown }; // aktualny stan
   public:
     inline 
     TAction GetAction() {
@@ -239,13 +235,10 @@ private:
     TDynamicObject *pVehicles[2]; // skrajne pojazdy w składzie (niekoniecznie bezpośrednio sterowane)
     TMoverParameters *mvControlling = nullptr; // jakim pojazdem steruje (może silnikowym w EZT)
     TMoverParameters *mvOccupied = nullptr; // jakim pojazdem hamuje
-    TTrainParameters *TrainParams = nullptr; // rozkład jazdy zawsze jest, nawet jeśli pusty
+    Mtable::TTrainParameters *TrainParams = nullptr; // rozkład jazdy zawsze jest, nawet jeśli pusty
     int iRadioChannel = 1; // numer aktualnego kanału radiowego
     int iGuardRadio = 0; // numer kanału radiowego kierownika (0, gdy nie używa radia)
-/*
-    TTextSound *tsGuardSignal = nullptr; // komunikat od kierownika
-*/
-    sound_source *tsGuardSignal { nullptr };
+    sound_source tsGuardSignal { sound_placement::internal };
   public:
     double AccPreferred = 0.0; // preferowane przyspieszenie (wg psychiki kierującego, zmniejszana przy wykryciu kolizji)
     double AccDesired = AccPreferred; // przyspieszenie, jakie ma utrzymywać (<0:nie przyspieszaj,<-0.1:hamuj)
@@ -259,13 +252,14 @@ private:
     double VelLimitLast = -1.0; // prędkość zadana przez ograniczenie // ostatnie ograniczenie bez ograniczenia
     double VelRoad = -1.0; // aktualna prędkość drogowa (ze znaku W27) (PutValues albo komendą) // prędkość drogowa bez ograniczenia
     double VelNext = 120.0; // prędkość, jaka ma być po przejechaniu długości ProximityDist
+    double VelRestricted = -1.0; // speed of travel after passing a permissive signal at stop
   private:
     double fProximityDist = 0.0; // odleglosc podawana w SetProximityVelocity(); >0:przeliczać do punktu, <0:podana wartość
     double FirstSemaphorDist = 10000.0; // odległość do pierwszego znalezionego semafora
   public:
     double ActualProximityDist = 1.0; // odległość brana pod uwagę przy wyliczaniu prędkości i przyspieszenia
   private:
-    vector3 vCommandLocation; // polozenie wskaznika, sygnalizatora lub innego obiektu do ktorego
+    Math3D::vector3 vCommandLocation; // polozenie wskaznika, sygnalizatora lub innego obiektu do ktorego
     // odnosi sie komenda
     TOrders OrderList[maxorders]; // lista rozkazów
     int OrderPos = 0,

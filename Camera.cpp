@@ -11,284 +11,128 @@ http://mozilla.org/MPL/2.0/.
 #include "Camera.h"
 
 #include "Globals.h"
-#include "Usefull.h"
+#include "utilities.h"
 #include "Console.h"
 #include "Timer.h"
 #include "mover.h"
 
 //---------------------------------------------------------------------------
 
-void TCamera::Init(vector3 NPos, vector3 NAngle)
+void TCamera::Init( Math3D::vector3 NPos, Math3D::vector3 NAngle)
 {
 
-    vUp = vector3(0, 1, 0);
-    Velocity = vector3(0, 0, 0);
+    vUp = Math3D::vector3(0, 1, 0);
+    Velocity = Math3D::vector3(0, 0, 0);
     Pitch = NAngle.x;
     Yaw = NAngle.y;
     Roll = NAngle.z;
     Pos = NPos;
 
-    Type = (Global::bFreeFly ? tp_Free : tp_Follow);
+    Type = (Global.bFreeFly ? tp_Free : tp_Follow);
 };
 
-void TCamera::OnCursorMove(double x, double y)
-{
-    // McZapkie-170402: zeby mysz dzialala zawsze    if (Type==tp_Follow)
+void TCamera::OnCursorMove(double x, double y) {
+
     Yaw -= x;
-    Pitch -= y;
-    if (Yaw > M_PI)
+    while( Yaw > M_PI ) {
         Yaw -= 2 * M_PI;
-    else if (Yaw < -M_PI)
+    }
+    while( Yaw < -M_PI ) {
         Yaw += 2 * M_PI;
-    if (Type == tp_Follow) // jeżeli jazda z pojazdem
-    {
-        clamp(Pitch, -M_PI_4, M_PI_4); // ograniczenie kąta spoglądania w dół i w górę
+    }
+    Pitch -= y;
+    if (Type == tp_Follow) {
+        // jeżeli jazda z pojazdem ograniczenie kąta spoglądania w dół i w górę
+        Pitch = clamp( Pitch, -M_PI_4, M_PI_4 );
     }
 }
 
-void
+bool
 TCamera::OnCommand( command_data const &Command ) {
 
-    double const walkspeed = 1.0;
-    double const runspeed = ( DebugModeFlag ? 50.0 : 7.5 );
-    double const speedmultiplier = ( DebugModeFlag ? 7.5 : 1.0 );
+    auto const walkspeed { 1.0 };
+    auto const runspeed { 10.0 };
 
+    bool iscameracommand { true };
     switch( Command.command ) {
 
         case user_command::viewturn: {
 
             OnCursorMove(
-                reinterpret_cast<double const &>( Command.param1 ) *  0.005 * Global::fMouseXScale / Global::ZoomFactor,
-                reinterpret_cast<double const &>( Command.param2 ) *  0.01  * Global::fMouseYScale / Global::ZoomFactor );
+                reinterpret_cast<double const &>( Command.param1 ) *  0.005 * Global.fMouseXScale / Global.ZoomFactor,
+                reinterpret_cast<double const &>( Command.param2 ) *  0.01  * Global.fMouseYScale / Global.ZoomFactor );
             break;
         }
 
-        case user_command::movevector: {
+        case user_command::movehorizontal:
+        case user_command::movehorizontalfast: {
 
-            auto const movespeed =
-                ( Type == tp_Free ?
-                    runspeed * speedmultiplier :
-                    walkspeed );
+            auto const movespeed = (
+                Type == tp_Free ?   runspeed :
+                Type == tp_Follow ? walkspeed :
+                0.0 );
+
+            auto const speedmultiplier = (
+                ( ( Type == tp_Free ) && ( Command.command == user_command::movehorizontalfast ) ) ?
+                    30.0 :
+                    1.0 );
 
             // left-right
-            double const movex = reinterpret_cast<double const &>( Command.param1 );
-            if( movex > 0.0 ) {
-                m_keys.right = true;
-                m_keys.left = false;
-            }
-            else if( movex < 0.0 ) {
-                m_keys.right = false;
-                m_keys.left = true;
-            }
-            else {
-                m_keys.right = false;
-                m_keys.left = false;
-            }
+            auto const movexparam { reinterpret_cast<double const &>( Command.param1 ) };
             // 2/3rd of the stick range enables walk speed, past that we lerp between walk and run speed
-            m_moverate.x =
-                walkspeed
-                + ( std::max( 0.0, std::abs( movex ) - 0.65 ) / 0.35 ) * ( movespeed - walkspeed );
+            auto const movex { walkspeed + ( std::max( 0.0, std::abs( movexparam ) - 0.65 ) / 0.35 ) * ( movespeed - walkspeed ) };
+
+            m_moverate.x = (
+                movexparam > 0.0 ?  movex * speedmultiplier :
+                movexparam < 0.0 ? -movex * speedmultiplier :
+                0.0 );
 
             // forward-back
-            double const movez = reinterpret_cast<double const &>( Command.param2 );
-            if( movez > 0.0 ) {
-                m_keys.forward = true;
-                m_keys.back = false;
-            }
-            else if( movez < 0.0 ) {
-                m_keys.forward = false;
-                m_keys.back = true;
-            }
-            else {
-                m_keys.forward = false;
-                m_keys.back = false;
-            }
-            m_moverate.z =
-                walkspeed
-                + ( std::max( 0.0, std::abs( movez ) - 0.65 ) / 0.35 ) * ( movespeed - walkspeed );
+            double const movezparam { reinterpret_cast<double const &>( Command.param2 ) };
+            auto const movez { walkspeed + ( std::max( 0.0, std::abs( movezparam ) - 0.65 ) / 0.35 ) * ( movespeed - walkspeed ) };
+            // NOTE: z-axis is flipped given world coordinate system
+            m_moverate.z = (
+                movezparam > 0.0 ? -movez * speedmultiplier :
+                movezparam < 0.0 ?  movez * speedmultiplier :
+                0.0 );
+
             break;
         }
 
-        case user_command::moveforward: {
+        case user_command::movevertical:
+        case user_command::moveverticalfast: {
 
-            if( Command.action != GLFW_RELEASE ) {
-                m_keys.forward = true;
-                m_moverate.z =
-                    ( Type == tp_Free ?
-                        walkspeed * speedmultiplier :
-                        walkspeed );
-            }
-            else {
-                m_keys.forward = false;
-            }
+            auto const movespeed = (
+                Type == tp_Free ?   runspeed * 0.5 :
+                Type == tp_Follow ? walkspeed :
+                0.0 );
+
+            auto const speedmultiplier = (
+                ( ( Type == tp_Free ) && ( Command.command == user_command::moveverticalfast ) ) ?
+                    10.0 :
+                    1.0 );
+
+            // up-down
+            auto const moveyparam { reinterpret_cast<double const &>( Command.param1 ) };
+            // 2/3rd of the stick range enables walk speed, past that we lerp between walk and run speed
+            auto const movey { walkspeed + ( std::max( 0.0, std::abs( moveyparam ) - 0.65 ) / 0.35 ) * ( movespeed - walkspeed ) };
+
+            m_moverate.y = (
+                moveyparam > 0.0 ?  movey * speedmultiplier :
+                moveyparam < 0.0 ? -movey * speedmultiplier :
+                0.0 );
+
             break;
         }
 
-        case user_command::moveback: {
+        default: {
 
-            if( Command.action != GLFW_RELEASE ) {
-                m_keys.back = true;
-                m_moverate.z =
-                    ( Type == tp_Free ?
-                        walkspeed * speedmultiplier :
-                        walkspeed );
-            }
-            else {
-                m_keys.back = false;
-            }
+            iscameracommand = false;
             break;
         }
+    } // switch
 
-        case user_command::moveleft: {
-
-            if( Command.action != GLFW_RELEASE ) {
-                m_keys.left = true;
-                m_moverate.x =
-                    ( Type == tp_Free ?
-                        walkspeed * speedmultiplier :
-                        walkspeed );
-            }
-            else {
-                m_keys.left = false;
-            }
-            break;
-        }
-
-        case user_command::moveright: {
-
-            if( Command.action != GLFW_RELEASE ) {
-                m_keys.right = true;
-                m_moverate.x =
-                    ( Type == tp_Free ?
-                        walkspeed * speedmultiplier :
-                        walkspeed );
-            }
-            else {
-                m_keys.right = false;
-            }
-            break;
-        }
-
-        case user_command::moveup: {
-
-            if( Command.action != GLFW_RELEASE ) {
-                m_keys.up = true;
-                m_moverate.y =
-                    ( Type == tp_Free ?
-                        walkspeed * speedmultiplier :
-                        walkspeed );
-            }
-            else {
-                m_keys.up = false;
-            }
-            break;
-        }
-
-        case user_command::movedown: {
-
-            if( Command.action != GLFW_RELEASE ) {
-                m_keys.down = true;
-                m_moverate.y =
-                    ( Type == tp_Free ?
-                        walkspeed * speedmultiplier :
-                        walkspeed );
-            }
-            else {
-                m_keys.down = false;
-            }
-            break;
-        }
-
-        case user_command::moveforwardfast: {
-
-            if( Command.action != GLFW_RELEASE ) {
-                m_keys.forward = true;
-                m_moverate.z =
-                    ( Type == tp_Free ?
-                        runspeed * speedmultiplier :
-                        walkspeed );
-            }
-            else {
-                m_keys.forward = false;
-            }
-            break;
-        }
-
-        case user_command::movebackfast: {
-
-            if( Command.action != GLFW_RELEASE ) {
-                m_keys.back = true;
-                m_moverate.z =
-                    ( Type == tp_Free ?
-                        runspeed * speedmultiplier :
-                        walkspeed );
-            }
-            else {
-                m_keys.back = false;
-            }
-            break;
-        }
-
-        case user_command::moveleftfast: {
-
-            if( Command.action != GLFW_RELEASE ) {
-                m_keys.left = true;
-                m_moverate.x =
-                    ( Type == tp_Free ?
-                        runspeed * speedmultiplier :
-                        walkspeed );
-            }
-            else {
-                m_keys.left = false;
-            }
-            break;
-        }
-
-        case user_command::moverightfast: {
-
-            if( Command.action != GLFW_RELEASE ) {
-                m_keys.right = true;
-                m_moverate.x =
-                    ( Type == tp_Free ?
-                        runspeed * speedmultiplier :
-                        walkspeed );
-            }
-            else {
-                m_keys.right = false;
-            }
-            break;
-        }
-
-        case user_command::moveupfast: {
-
-            if( Command.action != GLFW_RELEASE ) {
-                m_keys.up = true;
-                m_moverate.y =
-                    ( Type == tp_Free ?
-                        runspeed * speedmultiplier :
-                        walkspeed );
-            }
-            else {
-                m_keys.up = false;
-            }
-            break;
-        }
-
-        case user_command::movedownfast: {
-
-            if( Command.action != GLFW_RELEASE ) {
-                m_keys.down = true;
-                m_moverate.y =
-                    ( Type == tp_Free ?
-                        runspeed * speedmultiplier :
-                        walkspeed );
-            }
-            else {
-                m_keys.down = false;
-            }
-            break;
-        }
-    }
+    return iscameracommand;
 }
 
 void TCamera::Update()
@@ -309,72 +153,26 @@ void TCamera::Update()
 
     auto const deltatime = Timer::GetDeltaRenderTime(); // czas bez pauzy
 
-#ifdef EU07_USE_OLD_COMMAND_SYSTEM
-    double a = 0.8; // default (walk) movement speed
-    if( Type == tp_Free ) {
-        // when not in the cab the speed modifiers are active
-        if( Global::shiftState ) { a = 2.5; }
-        if( Global::ctrlState ) { a *= 10.0; }
-    }
-
     if( ( Type == tp_Free )
-     || ( false == Global::ctrlState ) ) {
+     || ( false == Global.ctrlState )
+     || ( true == DebugCameraFlag ) ) {
         // ctrl is used for mirror view, so we ignore the controls when in vehicle if ctrl is pressed
-        if( Console::Pressed( Global::Keys[ k_MechUp ] ) )
-            Velocity.y = clamp( Velocity.y + a * 10.0 * deltatime, -a, a );
-        if( Console::Pressed( Global::Keys[ k_MechDown ] ) )
-            Velocity.y = clamp( Velocity.y - a * 10.0 * deltatime, -a, a );
-
         // McZapkie-170402: poruszanie i rozgladanie we free takie samo jak w follow
-        if( Console::Pressed( Global::Keys[ k_MechRight ] ) )
-            Velocity.x = clamp( Velocity.x + a * 10.0 * deltatime, -a, a );
-        if( Console::Pressed( Global::Keys[ k_MechLeft ] ) )
-            Velocity.x = clamp( Velocity.x - a * 10.0 * deltatime, -a, a );
-        if( Console::Pressed( Global::Keys[ k_MechForward ] ) )
-            Velocity.z = clamp( Velocity.z - a * 10.0 * deltatime, -a, a );
-        if( Console::Pressed( Global::Keys[ k_MechBackward ] ) )
-            Velocity.z = clamp( Velocity.z + a * 10.0 * deltatime, -a, a );
+        Velocity.x = clamp( Velocity.x + m_moverate.x * 10.0 * deltatime, -std::abs( m_moverate.x ), std::abs( m_moverate.x ) );
+        Velocity.z = clamp( Velocity.z + m_moverate.z * 10.0 * deltatime, -std::abs( m_moverate.z ), std::abs( m_moverate.z ) );
+        Velocity.y = clamp( Velocity.y + m_moverate.y * 10.0 * deltatime, -std::abs( m_moverate.y ), std::abs( m_moverate.y ) );
     }
-#else
-/*
-    m_moverate = 0.8; // default (walk) movement speed
-    if( Type == tp_Free ) {
-        // when not in the cab the speed modifiers are active
-        if( Global::shiftState ) { m_moverate = 2.5; }
-        if( Global::ctrlState ) { m_moverate *= 10.0; }
-    }
-*/
-    if( ( Type == tp_Free )
-     || ( false == Global::ctrlState )
-     || ( true == DebugCameraFlag) ) {
-        // ctrl is used for mirror view, so we ignore the controls when in vehicle if ctrl is pressed
-        if( m_keys.up )
-            Velocity.y = clamp( Velocity.y + m_moverate.y * 10.0 * deltatime, -m_moverate.y, m_moverate.y );
-        if( m_keys.down )
-            Velocity.y = clamp( Velocity.y - m_moverate.y * 10.0 * deltatime, -m_moverate.y, m_moverate.y );
-
-        // McZapkie-170402: poruszanie i rozgladanie we free takie samo jak w follow
-        if( m_keys.right )
-            Velocity.x = clamp( Velocity.x + m_moverate.x * 10.0 * deltatime, -m_moverate.x, m_moverate.x );
-        if( m_keys.left )
-            Velocity.x = clamp( Velocity.x - m_moverate.x * 10.0 * deltatime, -m_moverate.x, m_moverate.x );
-        if( m_keys.forward )
-            Velocity.z = clamp( Velocity.z - m_moverate.z * 10.0 * deltatime, -m_moverate.z, m_moverate.z );
-        if( m_keys.back )
-            Velocity.z = clamp( Velocity.z + m_moverate.z * 10.0 * deltatime, -m_moverate.z, m_moverate.z );
-    }
-#endif
 
     if( ( Type == tp_Free )
      || ( true == DebugCameraFlag ) ) {
         // free movement position update is handled here, movement while in vehicle is handled by train update
-        vector3 Vec = Velocity;
+        Math3D::vector3 Vec = Velocity;
         Vec.RotateY( Yaw );
         Pos += Vec * 5.0 * deltatime;
     }
 }
 
-vector3 TCamera::GetDirection() {
+Math3D::vector3 TCamera::GetDirection() {
 
     return glm::normalize( glm::rotateY<float>( glm::vec3{ 0.f, 0.f, 1.f }, Yaw ) );
 }
@@ -401,10 +199,10 @@ bool TCamera::SetMatrix( glm::dmat4 &Matrix ) {
 
 void TCamera::RaLook()
 { // zmiana kierunku patrzenia - przelicza Yaw
-    vector3 where = LookAt - Pos + vector3(0, 3, 0); // trochę w górę od szyn
+    Math3D::vector3 where = LookAt - Pos + Math3D::vector3(0, 3, 0); // trochę w górę od szyn
     if ((where.x != 0.0) || (where.z != 0.0))
         Yaw = atan2(-where.x, -where.z); // kąt horyzontalny
-    double l = Length3(where);
+    double l = Math3D::Length3(where);
     if (l > 0.0)
         Pitch = asin(where.y / l); // kąt w pionie
 };
@@ -412,5 +210,5 @@ void TCamera::RaLook()
 void TCamera::Stop()
 { // wyłącznie bezwładnego ruchu po powrocie do kabiny
     Type = tp_Follow;
-    Velocity = vector3(0, 0, 0);
+    Velocity = Math3D::vector3(0, 0, 0);
 };

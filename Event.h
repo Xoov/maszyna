@@ -9,11 +9,9 @@ http://mozilla.org/MPL/2.0/.
 
 #pragma once
 
-#include <string>
-#include "dumb3d.h"
 #include "classes.h"
+#include "dumb3d.h"
 #include "names.h"
-#include "scenenode.h"
 #include "evlaunch.h"
 
 enum TEventType {
@@ -74,11 +72,7 @@ union TParam
     bool asBool;
     double asdouble;
     int asInt;
-#ifdef EU07_USE_OLD_SOUNDCODE
-    TTextSound *tsTextSound;
-#else
     sound_source *tsTextSound;
-#endif
     char *asText;
     TCommandType asCommand;
     TTractionPowerSource *psPower;

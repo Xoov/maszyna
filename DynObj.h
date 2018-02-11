@@ -12,12 +12,13 @@ http://mozilla.org/MPL/2.0/.
 #include <string>
 #include <functional>
 
+#include "classes.h"
+#include "material.h"
+#include "mczapkie/mover.h"
 #include "TrkFoll.h"
-// McZapkie:
 #include "Button.h"
 #include "AirCoupler.h"
 #include "sound.h"
-#include "texture.h"
 
 //---------------------------------------------------------------------------
 //---------------------------------------------------------------------------
@@ -268,6 +269,7 @@ private:
     };
 
     struct pantograph_sounds {
+        // TODO: split pantograph sound into one for contact of arm with the wire, and electric arc sound
         sound_source sPantUp { sound_placement::external };
         sound_source sPantDown { sound_placement::external };
     };
@@ -284,12 +286,14 @@ private:
     };
 
     struct powertrain_sounds {
+        sound_source inverter { sound_placement::engine };
         sound_source motor { sound_placement::external }; // generally traction motor
         double motor_volume { 0.0 }; // MC: pomocnicze zeby gladziej silnik buczal
         float motor_momentum { 0.f }; // recent change in motor revolutions
         sound_source motor_relay { sound_placement::engine };
         sound_source dsbWejscie_na_bezoporow { sound_placement::engine }; // moved from cab
         sound_source motor_parallel { sound_placement::engine }; // moved from cab
+        sound_source motor_shuntfield { sound_placement::engine };
         sound_source rsWentylator { sound_placement::engine }; // McZapkie-030302
         sound_source engine { sound_placement::engine }; // generally diesel engine
         sound_source engine_ignition { sound_placement::engine }; // moved from cab
@@ -452,7 +456,7 @@ private:
     TDynamicObject();
     ~TDynamicObject();
     // zwraca długość pojazdu albo 0, jeśli błąd
-    double TDynamicObject::Init(
+    double Init(
         std::string Name, std::string BaseDir, std::string asReplacableSkin, std::string Type_Name,
         TTrack *Track, double fDist, std::string DriverType, double fVel, std::string TrainName,
         float Load, std::string LoadType, bool Reversed, std::string);

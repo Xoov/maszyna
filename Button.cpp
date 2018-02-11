@@ -71,7 +71,7 @@ void TButton::Load( cParser &Parser, TDynamicObject const *Owner, TModel3d *pMod
     if( ( pModelOn  == nullptr )
      && ( pModelOff == nullptr ) ) {
         // if we failed to locate even one state submodel, cry
-        ErrorLog( "Bad model: failed to locate sub-model \"" + submodelname + "\" in 3d model \"" + pModel1->NameGet() + "\"" );
+        ErrorLog( "Bad model: failed to locate sub-model \"" + submodelname + "\" in 3d model \"" + pModel1->NameGet() + "\"", logtype::model );
     }
 
     // pass submodel location to defined sounds
@@ -105,7 +105,7 @@ TButton::model_offset() const {
 
     return (
         submodel != nullptr ?
-            submodel->offset( 1.f ) :
+            submodel->offset( std::numeric_limits<float>::max() ) :
             glm::vec3() );
 }
 
@@ -132,6 +132,7 @@ void TButton::Update() {
     if( pModelOn  != nullptr ) { pModelOn->iVisible  =   m_state; }
     if( pModelOff != nullptr ) { pModelOff->iVisible = (!m_state); }
 
+#ifdef _WIN32
     if (iFeedbackBit) {
         // jeżeli generuje informację zwrotną
         if (m_state) // zapalenie
@@ -139,6 +140,7 @@ void TButton::Update() {
         else
             Console::BitsClear(iFeedbackBit);
     }
+#endif
 };
 
 void TButton::AssignBool(bool const *bValue) {

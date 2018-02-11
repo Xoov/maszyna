@@ -15,26 +15,30 @@ http://mozilla.org/MPL/2.0/.
 #include "mtable.h"
 #include "logs.h"
 
+#ifdef _WIN32
 extern "C"
 {
     GLFWAPI HWND glfwGetWin32Window( GLFWwindow* window ); //m7todo: potrzebne do directsound
 }
+#endif
 
 namespace multiplayer {
 
-#ifdef _WINDOWS
 void
 Navigate(std::string const &ClassName, UINT Msg, WPARAM wParam, LPARAM lParam) {
+#ifdef _WIN32
     // wysłanie komunikatu do sterującego
     HWND h = FindWindow(ClassName.c_str(), 0); // można by to zapamiętać
     if (h == 0)
         h = FindWindow(0, ClassName.c_str()); // można by to zapamiętać
     SendMessage(h, Msg, wParam, lParam);
+#endif
 }
 
 void
 WyslijEvent(const std::string &e, const std::string &d)
 { // Ra: jeszcze do wyczyszczenia
+#ifdef _WIN32
     DaneRozkaz r;
     r.iSygn = MAKE_ID4( 'E', 'U', '0', '7' );
     r.iComm = 2; // 2 - event
@@ -47,14 +51,16 @@ WyslijEvent(const std::string &e, const std::string &d)
     cData.dwData = MAKE_ID4( 'E', 'U', '0', '7' ); // sygnatura
     cData.cbData = (DWORD)(12 + i + j); // 8+dwa liczniki i dwa zera kończące
     cData.lpData = &r;
-    Navigate( "TEU07SRK", WM_COPYDATA, (WPARAM)glfwGetWin32Window( Global::window ), (LPARAM)&cData );
+    Navigate( "TEU07SRK", WM_COPYDATA, (WPARAM)glfwGetWin32Window( Global.window ), (LPARAM)&cData );
 	CommLog( Now() + " " + std::to_string(r.iComm) + " " + e + " sent" );
+#endif
 }
 
 void
 WyslijUszkodzenia(const std::string &t, char fl)
 { // wysłanie informacji w postaci pojedynczego tekstu
-	DaneRozkaz r;
+#ifdef _WIN32
+    DaneRozkaz r;
     r.iSygn = MAKE_ID4( 'E', 'U', '0', '7' );
 	r.iComm = 13; // numer komunikatu
 	size_t i = t.length();
@@ -65,13 +71,15 @@ WyslijUszkodzenia(const std::string &t, char fl)
     cData.dwData = MAKE_ID4( 'E', 'U', '0', '7' ); // sygnatura
 	cData.cbData = (DWORD)(11 + i); // 8+licznik i zero kończące
 	cData.lpData = &r;
-    Navigate( "TEU07SRK", WM_COPYDATA, (WPARAM)glfwGetWin32Window( Global::window ), (LPARAM)&cData );
+    Navigate( "TEU07SRK", WM_COPYDATA, (WPARAM)glfwGetWin32Window( Global.window ), (LPARAM)&cData );
 	CommLog( Now() + " " + std::to_string(r.iComm) + " " + t + " sent");
+#endif
 }
 
 void
 WyslijString(const std::string &t, int n)
 { // wysłanie informacji w postaci pojedynczego tekstu
+#ifdef _WIN32
     DaneRozkaz r;
     r.iSygn = MAKE_ID4( 'E', 'U', '0', '7' );
     r.iComm = n; // numer komunikatu
@@ -82,8 +90,9 @@ WyslijString(const std::string &t, int n)
     cData.dwData = MAKE_ID4( 'E', 'U', '0', '7' ); // sygnatura
     cData.cbData = (DWORD)(10 + i); // 8+licznik i zero kończące
     cData.lpData = &r;
-    Navigate( "TEU07SRK", WM_COPYDATA, (WPARAM)glfwGetWin32Window( Global::window ), (LPARAM)&cData );
+    Navigate( "TEU07SRK", WM_COPYDATA, (WPARAM)glfwGetWin32Window( Global.window ), (LPARAM)&cData );
 	CommLog( Now() + " " + std::to_string(r.iComm) + " " + t + " sent");
+#endif
 }
 
 void
@@ -95,14 +104,15 @@ WyslijWolny(const std::string &t)
 void
 WyslijNamiary(TDynamicObject const *Vehicle)
 { // wysłanie informacji o pojeździe - (float), długość ramki będzie zwiększana w miarę potrzeby
-    // WriteLog("Wysylam pojazd");
+#ifdef _WIN32
+  // WriteLog("Wysylam pojazd");
     DaneRozkaz r;
     r.iSygn = MAKE_ID4( 'E', 'U', '0', '7' );
     r.iComm = 7; // 7 - dane pojazdu
 	int i = 32;
 	size_t j = Vehicle->asName.length();
     r.iPar[0] = i; // ilość danych liczbowych
-    r.fPar[1] = Global::fTimeAngleDeg / 360.0; // aktualny czas (1.0=doba)
+    r.fPar[1] = Global.fTimeAngleDeg / 360.0; // aktualny czas (1.0=doba)
     r.fPar[2] = Vehicle->MoverParameters->Loc.X; // pozycja X
     r.fPar[3] = Vehicle->MoverParameters->Loc.Y; // pozycja Y
     r.fPar[4] = Vehicle->MoverParameters->Loc.Z; // pozycja Z
@@ -112,7 +122,7 @@ WyslijNamiary(TDynamicObject const *Vehicle)
     r.fPar[7] = 0; // prędkość ruchu Z
     r.fPar[8] = Vehicle->MoverParameters->AccS; // przyspieszenie X
     r.fPar[9] = Vehicle->MoverParameters->AccN; // przyspieszenie Y //na razie nie
-    r.fPar[10] = Vehicle->MoverParameters->AccV; // przyspieszenie Z
+    r.fPar[10] = Vehicle->MoverParameters->AccVert; // przyspieszenie Z
     r.fPar[11] = Vehicle->MoverParameters->DistCounter; // przejechana odległość w km
     r.fPar[12] = Vehicle->MoverParameters->PipePress; // ciśnienie w PG
     r.fPar[13] = Vehicle->MoverParameters->ScndPipePress; // ciśnienie w PZ
@@ -164,15 +174,17 @@ WyslijNamiary(TDynamicObject const *Vehicle)
     cData.cbData = (DWORD)(10 + i + j); // 8+licznik i zero kończące
     cData.lpData = &r;
     // WriteLog("Ramka gotowa");
-    Navigate( "TEU07SRK", WM_COPYDATA, (WPARAM)glfwGetWin32Window( Global::window ), (LPARAM)&cData );
+    Navigate( "TEU07SRK", WM_COPYDATA, (WPARAM)glfwGetWin32Window( Global.window ), (LPARAM)&cData );
     // WriteLog("Ramka poszla!");
 	CommLog( Now() + " " + std::to_string(r.iComm) + " " + Vehicle->asName + " sent");
+#endif
 }
 
 void
 WyslijObsadzone()
 {   // wysłanie informacji o pojeździe
-	DaneRozkaz2 r;
+#ifdef _WIN32
+    DaneRozkaz2 r;
     r.iSygn = MAKE_ID4( 'E', 'U', '0', '7' );
 	r.iComm = 12;   // kod 12
 	for (int i=0; i<1984; ++i) r.cString[i] = 0;
@@ -211,13 +223,15 @@ WyslijObsadzone()
 	cData.cbData = 8 + 1984; // 8+licznik i zero kończące
 	cData.lpData = &r;
 	// WriteLog("Ramka gotowa");
-    Navigate( "TEU07SRK", WM_COPYDATA, (WPARAM)glfwGetWin32Window( Global::window ), (LPARAM)&cData );
+    Navigate( "TEU07SRK", WM_COPYDATA, (WPARAM)glfwGetWin32Window( Global.window ), (LPARAM)&cData );
 	CommLog( Now() + " " + std::to_string(r.iComm) + " obsadzone" + " sent");
+#endif
 }
 
 void
 WyslijParam(int nr, int fl)
 { // wysłanie parametrów symulacji w ramce (nr) z flagami (fl)
+#ifdef _WIN32
     DaneRozkaz r;
     r.iSygn = MAKE_ID4( 'E', 'U', '0', '7' );
     r.iComm = nr; // zwykle 5
@@ -226,8 +240,8 @@ WyslijParam(int nr, int fl)
     switch (nr)
     { // można tym przesyłać różne zestawy parametrów
     case 5: // czas i pauza
-        r.fPar[1] = Global::fTimeAngleDeg / 360.0; // aktualny czas (1.0=doba)
-        r.iPar[2] = Global::iPause; // stan zapauzowania
+        r.fPar[1] = Global.fTimeAngleDeg / 360.0; // aktualny czas (1.0=doba)
+        r.iPar[2] = Global.iPause; // stan zapauzowania
         i = 8; // dwa parametry po 4 bajty każdy
         break;
     }
@@ -235,9 +249,9 @@ WyslijParam(int nr, int fl)
     cData.dwData = MAKE_ID4( 'E', 'U', '0', '7' ); // sygnatura
     cData.cbData = 12 + i; // 12+rozmiar danych
     cData.lpData = &r;
-    Navigate( "TEU07SRK", WM_COPYDATA, (WPARAM)glfwGetWin32Window( Global::window ), (LPARAM)&cData );
-}
+    Navigate( "TEU07SRK", WM_COPYDATA, (WPARAM)glfwGetWin32Window( Global.window ), (LPARAM)&cData );
 #endif
+}
 
 } // multiplayer
 

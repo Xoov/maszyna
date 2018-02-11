@@ -3,7 +3,7 @@
 #include "moon.h"
 #include "globals.h"
 #include "mtable.h"
-#include "usefull.h"
+#include "utilities.h"
 #include "world.h"
 
 //////////////////////////////////////////////////////////////////////////////////////////
@@ -36,7 +36,7 @@ void
 cMoon::update() {
 
     move();
-    glm::vec3 position( 0.f, 0.f, -2000.f * Global::fDistanceFactor );
+    glm::vec3 position( 0.f, 0.f, -2000.f * Global.fDistanceFactor );
     position = glm::rotateX( position, glm::radians( static_cast<float>( m_body.elevref ) ) );
     position = glm::rotateY( position, glm::radians( static_cast<float>( -m_body.hrang ) ) );
 
@@ -54,7 +54,7 @@ cMoon::render() {
     ::glEnd();
     ::glPushMatrix();
     ::glTranslatef( m_position.x, m_position.y, m_position.z );
-    ::gluSphere( moonsphere, /* (float)( Global::iWindowHeight / Global::FieldOfView ) * 0.5 * */ ( m_body.distance / 60.2666 ) * 9.037461, 12, 12 );
+    ::gluSphere( moonsphere, /* (float)( Global.iWindowHeight / Global.FieldOfView ) * 0.5 * */ ( m_body.distance / 60.2666 ) * 9.037461, 12, 12 );
 	::glPopMatrix();
 }
 
@@ -118,10 +118,11 @@ void cMoon::move() {
     if( m_observer.second >= 0 ) { localtime.wSecond = m_observer.second; }
 
     double ut = localtime.wHour
-        + localtime.wMinute / 60.0 // too low resolution, noticeable skips
-        + localtime.wSecond / 3600.0; // good enough in normal circumstances
+        + localtime.wMinute / 60.0; // too low resolution, noticeable skips
+    // NOTE: finer resolution disabled to reduce shadow crawl in current implementation
     /*
-    + localtime.wMilliseconds / 3600000.0; // for really smooth movement
+        + localtime.wSecond / 3600.0 // good enough in normal circumstances
+        + localtime.wMilliseconds / 3600000.0; // for really smooth movement
     */
     double daynumber = 367 * localtime.wYear
         - 7 * ( localtime.wYear + ( localtime.wMonth + 9 ) / 12 ) / 4

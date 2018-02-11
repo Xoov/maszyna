@@ -84,8 +84,6 @@ extern int ConversionError;
 const double Steel2Steel_friction = 0.15;      //tarcie statyczne
 const double g = 9.81;                     //przyspieszenie ziemskie
 const double SandSpeed = 0.1;              //ile kg/s}
-const double RVentSpeed = 0.4;             //rozpedzanie sie wentylatora obr/s^2}
-const double RVentMinI = 50.0;             //przy jakim pradzie sie wylaczaja}
 const double Pirazy2 = 6.2831853071794f;
 #define PI 3.1415926535897f
 
@@ -204,11 +202,13 @@ enum sound {
     bufferclash = 0x4,
     relay = 0x10,
     parallel = 0x20,
-    pneumatic = 0x40
+    shuntfield = 0x40,
+    pneumatic = 0x80
 };
 
 //szczególne typy pojazdów (inna obsługa) dla zmiennej TrainType
 //zamienione na flagi bitowe, aby szybko wybierać grupę (np. EZT+SZT)
+// TODO: convert to enums, they're used as specific checks anyway
 static int const dt_Default = 0;
 static int const dt_EZT = 1;
 static int const dt_ET41 = 2;
@@ -219,6 +219,7 @@ static int const dt_SN61 = 0x20; //nie używane w warunkach, ale ustawiane z CHK
 static int const dt_EP05 = 0x40;
 static int const dt_ET40 = 0x80;
 static int const dt_181 = 0x100;
+static int const dt_DMU = 0x200;
 
 //stałe dla asynchronów
 static int const eimc_s_dfic = 0;
@@ -738,7 +739,8 @@ public:
 	double u = 0.0; //wspolczynnik tarcia yB wywalic!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 	double CircuitRes = 0.0;      /*rezystancje silnika i obwodu*/
 	int IminLo = 0; int IminHi = 0; /*prady przelacznika automatycznego rozruchu, uzywane tez przez ai_driver*/
-	int ImaxLo = 0; int ImaxHi = 0; /*maksymalny prad niskiego i wysokiego rozruchu*/
+	int ImaxLo = 0; // maksymalny prad niskiego rozruchu
+    int ImaxHi = 0; // maksymalny prad wysokiego rozruchu
 	double nmax = 0.0;             /*maksymalna dop. ilosc obrotow /s*/
 	double InitialCtrlDelay = 0.0; double CtrlDelay = 0.0;        /* -//-  -//- miedzy kolejnymi poz.*/
 	double CtrlDownDelay = 0.0;    /* -//-  -//- przy schodzeniu z poz.*/ /*hunter-101012*/
@@ -751,6 +753,8 @@ public:
 	int RVentType = 0;        /*0 - brak, 1 - jest, 2 - automatycznie wlaczany*/
 	double RVentnmax = 1.0;      /*maks. obroty wentylatorow oporow rozruchowych*/
 	double RVentCutOff = 0.0;      /*rezystancja wylaczania wentylatorow dla RVentType=2*/
+    double RVentSpeed { 0.5 }; //rozpedzanie sie wentylatora obr/s^2}
+    double RVentMinI { 50.0 }; //przy jakim pradzie sie wylaczaja}
 	int CompressorPower = 1; /*0: bezp. z obwodow silnika, 1: z przetwornicy, reczne, 2: w przetwornicy, stale, 5: z silnikowego*/
 	int SmallCompressorPower = 0; /*Winger ZROBIC*/
 	bool Trafo = false;      /*pojazd wyposażony w transformator*/
@@ -815,6 +819,7 @@ public:
 	double eimc[26];
 	bool EIMCLogForce; // 
     static std::vector<std::string> const eimc_labels;
+    double InverterFrequency { 0.0 }; // current frequency of power inverters
 	/*-dla wagonow*/
     double MaxLoad = 0.0;           /*masa w T lub ilosc w sztukach - ladownosc*/
 	std::string LoadAccepted; std::string LoadQuantity; /*co moze byc zaladowane, jednostki miary*/
@@ -849,8 +854,9 @@ public:
 	double V = 0.0;    //predkosc w [m/s] względem sprzęgów (dodania gdy jedzie w stronę 0)
 	double Vel = 0.0;  //moduł prędkości w [km/h], używany przez AI
 	double AccS = 0.0; //efektywne przyspieszenie styczne w [m/s^2] (wszystkie siły)
-	double AccN = 0.0; //przyspieszenie normalne w [m/s^2]
-	double AccV = 0.0;
+    double AccSVBased {}; // tangential acceleration calculated from velocity change
+	double AccN = 0.0; // przyspieszenie normalne w [m/s^2]
+	double AccVert = 0.0; // vertical acceleration
 	double nrot = 0.0;
 	double WheelFlat = 0.0;
 	/*! rotacja kol [obr/s]*/
@@ -942,17 +948,21 @@ public:
 	bool InsideConsist = false;
 	/*-zmienne dla lokomotywy elektrycznej*/
 	TTractionParam RunningTraction;/*parametry sieci trakcyjnej najblizej lokomotywy*/
-	double enrot = 0.0;
-    double Im = 0.0;
-    double Itot = 0.0;
+	double enrot = 0.0; // ilosc obrotow silnika
+    double Im = 0.0; // prad silnika
+/*
+    // currently not used
     double IHeating = 0.0;
     double ITraction = 0.0;
+*/
+    double Itot = 0.0; // prad calkowity
     double TotalCurrent = 0.0;
+    // momenty
     double Mm = 0.0;
     double Mw = 0.0;
+    // sily napedne
     double Fw = 0.0;
     double Ft = 0.0;
-	/*ilosc obrotow, prad silnika i calkowity, momenty, sily napedne*/
 	//Ra: Im jest ujemny, jeśli lok jedzie w stronę sprzęgu 1
 	//a ujemne powinien być przy odwróconej polaryzacji sieci...
 	//w wielu miejscach jest używane abs(Im)
