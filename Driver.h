@@ -212,6 +212,7 @@ public:
     double fLastStopExpDist = -1.0; // odległość wygasania ostateniego przystanku
     double ReactionTime = 0.0; // czas reakcji Ra: czego i na co? świadomości AI
     double fBrakeTime = 0.0; // wpisana wartość jest zmniejszana do 0, gdy ujemna należy zmienić nastawę hamulca
+    double BrakeChargingCooldown {}; // prevents the ai from trying to charge the train brake too frequently
     double fReady = 0.0; // poziom odhamowania wagonów
     bool Ready = false; // ABu: stan gotowosci do odjazdu - sprawdzenie odhamowania wagonow
 private:
@@ -281,16 +282,18 @@ private:
     int iOverheadZero = 0; // suma bitowa jezdy bezprądowej, bity ustawiane przez pojazdy z podniesionymi pantografami
     int iOverheadDown = 0; // suma bitowa opuszczenia pantografów, bity ustawiane przez pojazdy z podniesionymi pantografami
     double fVoltage = 0.0; // uśrednione napięcie sieci: przy spadku poniżej wartości minimalnej opóźnić rozruch o losowy czas
-  private:
+ private:
     double fMaxProximityDist = 50.0; // stawanie między 30 a 60 m przed przeszkodą // akceptowalna odległość stanięcia przed przeszkodą
     TStopReason eStopReason = stopSleep; // powód zatrzymania przy ustawieniu zerowej prędkości // na początku śpi
     std::string VehicleName;
     double fVelPlus = 0.0; // dopuszczalne przekroczenie prędkości na ograniczeniu bez hamowania
     double fVelMinus = 0.0; // margines obniżenia prędkości, powodujący załączenie napędu
     double fWarningDuration = 0.0; // ile czasu jeszcze trąbić
-    double fStopTime = 0.0; // czas postoju przed dalszą jazdą (np. na przystanku)
     double WaitingTime = 0.0; // zliczany czas oczekiwania do samoistnego ruszenia
     double WaitingExpireTime = 31.0; // tyle ma czekać, zanim się ruszy // maksymlany czas oczekiwania do samoistnego ruszenia
+    double IdleTime {}; // keeps track of time spent at a stop
+  public:
+    double fStopTime = 0.0; // czas postoju przed dalszą jazdą (np. na przystanku)
 
   private: //---//---//---//---// koniec zmiennych, poniżej metody //---//---//---//---//
     void SetDriverPsyche();
@@ -301,7 +304,7 @@ private:
     bool IncSpeed();
     bool DecSpeed(bool force = false);
     void SpeedSet();
-    void Doors(bool what);
+    void Doors(bool const Open, int const Side = 0);
     void RecognizeCommand(); // odczytuje komende przekazana lokomotywie
     void Activation(); // umieszczenie obsady w odpowiednim członie
     void ControllingSet(); // znajduje człon do sterowania

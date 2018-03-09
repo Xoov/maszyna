@@ -567,13 +567,6 @@ global_settings::ConfigParse(cParser &Parser) {
             UITextColor = UITextColor / 255.0f;
             UITextColor.a = 1.0f;
         }
-        else if (token == "pyscreenrendererpriority")
-        {
-            // priority of python screen renderer
-            Parser.getTokens();
-            Parser >> token;
-            TPythonInterpreter::getInstance()->setScreenRendererPriority(token.c_str());
-        }
         else if( token == "input.gamepad" ) {
             // czy grupować eventy o tych samych nazwach
             Parser.getTokens();
@@ -616,6 +609,10 @@ global_settings::ConfigParse(cParser &Parser) {
         else if( token == "uartdebug" ) {
             Parser.getTokens( 1 );
             Parser >> uart_conf.debug;
+        }
+        else if( token == "compresstex" ) {
+            Parser.getTokens( 1 );
+            Parser >> compress_tex;
         }
     } while ((token != "") && (token != "endconfig")); //(!Parser->EndOfFile)
     // na koniec trochę zależności

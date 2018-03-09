@@ -193,6 +193,9 @@ class TTrain
     static void OnCommand_mubrakingindicatortoggle( TTrain *Train, command_data const &Command );
     static void OnCommand_reverserincrease( TTrain *Train, command_data const &Command );
     static void OnCommand_reverserdecrease( TTrain *Train, command_data const &Command );
+    static void OnCommand_reverserforward( TTrain *Train, command_data const &Command );
+    static void OnCommand_reverserneutral( TTrain *Train, command_data const &Command );
+    static void OnCommand_reverserbackward( TTrain *Train, command_data const &Command );
     static void OnCommand_alerteracknowledge( TTrain *Train, command_data const &Command );
     static void OnCommand_batterytoggle( TTrain *Train, command_data const &Command );
     static void OnCommand_batteryenable( TTrain *Train, command_data const &Command );
@@ -240,7 +243,11 @@ class TTrain
     static void OnCommand_headlightenableupper( TTrain *Train, command_data const &Command );
     static void OnCommand_headlightdisableupper( TTrain *Train, command_data const &Command );
     static void OnCommand_redmarkertoggleleft( TTrain *Train, command_data const &Command );
+    static void OnCommand_redmarkerenableleft( TTrain *Train, command_data const &Command );
+    static void OnCommand_redmarkerdisableleft( TTrain *Train, command_data const &Command );
     static void OnCommand_redmarkertoggleright( TTrain *Train, command_data const &Command );
+    static void OnCommand_redmarkerenableright( TTrain *Train, command_data const &Command );
+    static void OnCommand_redmarkerdisableright( TTrain *Train, command_data const &Command );
     static void OnCommand_headlighttogglerearleft( TTrain *Train, command_data const &Command );
     static void OnCommand_headlighttogglerearright( TTrain *Train, command_data const &Command );
     static void OnCommand_headlighttogglerearupper( TTrain *Train, command_data const &Command );
@@ -284,7 +291,7 @@ class TTrain
     TMoverParameters *mvSecond; // drugi człon (ET40, ET41, ET42, ukrotnienia)
     TMoverParameters *mvThird; // trzeci człon (SN61)
     // helper variable, to prevent immediate switch between closing and opening line breaker circuit
-    int m_linebreakerstate { 0 }; // -1: freshly open, 0: open, 1: closed, 2: freshly closed (and yes this is awful way to go about it)
+    int m_linebreakerstate { 0 }; // 0: open, 1: closed, 2: freshly closed (and yes this is awful way to go about it)
     static const commandhandler_map m_commandhandlers;
     control_mapper m_controlmapper;
 
@@ -497,6 +504,13 @@ public: // reszta może by?publiczna
     double fMechMaxSpring;
     double fMechRoll;
     double fMechPitch;
+    struct engineshake_config {
+        float scale { 2.f };
+        float fadein_offset { 1.5f };
+        float fadein_factor { 0.3f };
+        float fadeout_offset { 10.f };
+        float fadeout_factor { 0.5f };
+    } EngineShake;
 
     sound_source dsbReverserKey { sound_placement::internal, EU07_SOUND_CABCONTROLSCUTOFFRANGE }; // hunter-121211
     sound_source dsbNastawnikJazdy { sound_placement::internal, EU07_SOUND_CABCONTROLSCUTOFFRANGE };
@@ -577,7 +591,7 @@ private:
     float fPress[20][3]; // cisnienia dla wszystkich czlonow
     static std::vector<std::string> const fPress_labels;
     float fEIMParams[9][10]; // parametry dla silnikow asynchronicznych
-    int RadioChannel() { return iRadioChannel; };
+    int RadioChannel() const { return iRadioChannel; };
     // plays provided sound from position of the radio
     void radio_message( sound_source *Message, int const Channel );
     inline TDynamicObject *Dynamic() { return DynamicObject; };

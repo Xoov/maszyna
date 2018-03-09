@@ -68,7 +68,7 @@ struct global_settings {
     float fFriction{ 1.f }; // mnożnik tarcia - KURS90
     bool bLiveTraction{ true };
     float Overcast{ 0.1f }; // NOTE: all this weather stuff should be moved elsewhere
-    GLfloat FogColor[ 3 ] = { 0.6f, 0.7f, 0.8f };
+    glm::vec3 FogColor = { 0.6f, 0.7f, 0.8f };
     double fFogStart{ 1700 };
     double fFogEnd{ 2000 };
     std::string Season{}; // season of the year, based on simulation date
@@ -118,6 +118,7 @@ struct global_settings {
     float SplineFidelity{ 1.f }; // determines segment size during conversion of splines to geometry
     bool ResourceSweep{ true }; // gfx resource garbage collection
     bool ResourceMove{ false }; // gfx resources are moved between cpu and gpu side instead of sending a copy
+    bool compress_tex{ true }; // all textures are compressed on gpu side
     std::string asSky{ "1" };
     bool bGlutFont{ false }; // czy tekst generowany przez GLUT32.DLL
     double fFpsAverage{ 20.0 }; // oczekiwana wartosć FPS

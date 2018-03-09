@@ -249,6 +249,12 @@ keyboard_input::default_bindings() {
         { GLFW_KEY_D },
         // reverserdecrease
         { GLFW_KEY_R },
+        // reverserforward
+        { -1 },
+        // reverserneutral
+        { -1 },
+        // reverserbackward
+        { -1 },
         // linebreakertoggle
         { GLFW_KEY_M },
         // linebreakeropen
@@ -403,8 +409,16 @@ keyboard_input::default_bindings() {
         { -1 },
         // redmarkertoggleleft
         { GLFW_KEY_Y | keymodifier::shift },
+        // redmarkerenableleft
+        { -1 },
+        // redmarkerdisableleft
+        { -1 },
         // redmarkertoggleright
         { GLFW_KEY_I | keymodifier::shift },
+        // redmarkerenableright
+        { -1 },
+        // redmarkerdisableright
+        { -1 },
         // headlighttogglerearleft
         { GLFW_KEY_Y | keymodifier::control },
         // headlighttogglerearright

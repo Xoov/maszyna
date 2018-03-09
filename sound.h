@@ -179,15 +179,15 @@ private:
     template <class Iterator_>
     void
         insert( Iterator_ First, Iterator_ Last ) {
-            uint32_sequence sounds;
+            update_counter( *First, 1 );
             std::vector<audio::buffer_handle> buffers;
+            uint32_sequence sounds;
             std::for_each(
                 First, Last,
                 [&]( sound_handle const &soundhandle ) {
-                    sounds.emplace_back( soundhandle );
-                    buffers.emplace_back( sound( soundhandle ).buffer ); } );
-            audio::renderer.insert( std::begin( buffers ), std::end( buffers ), this, sounds );
-            update_counter( *First, 1 ); }
+                    buffers.emplace_back( sound( soundhandle ).buffer );
+                    sounds.emplace_back( soundhandle ); } );
+            audio::renderer.insert( std::begin( buffers ), std::end( buffers ), this, sounds ); }
     sound_data &
         sound( sound_handle const Sound );
     sound_data const &
@@ -203,6 +203,9 @@ private:
     sound_properties m_properties; // current properties of the emitted sounds
     float m_pitchvariation {}; // emitter-specific shift in base pitch
     bool m_stop { false }; // indicates active sample instances should be terminated
+/*
+    bool m_stopend { false }; // indicates active instances of optional ending sound should be terminated
+*/
     bool m_playbeginning { true }; // indicates started sounds should be preceeded by opening bookend if there's one
     std::array<sound_data, 3> m_sounds { {} }; // basic sounds emitted by the source, main and optional bookends
     std::vector<soundchunk_pair> m_soundchunks; // table of samples activated when associated variable is within certain range

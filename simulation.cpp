@@ -167,6 +167,9 @@ state_manager::deserialize_atmo( cParser &Input, scene::scratch_data &Scratchpad
     if( token != "endatmo" ) {
         // optional overcast parameter
         Global.Overcast = clamp( std::stof( token ), 0.f, 2.f );
+        // overcast drives weather so do a calculation here
+        // NOTE: ugly, clean it up when we're done with world refactoring
+        Global.pWorld->compute_weather();
     }
     while( ( false == token.empty() )
         && ( token != "endatmo" ) ) {
@@ -817,6 +820,11 @@ state_manager::deserialize_dynamic( cParser &Input, scene::scratch_data &Scratch
         }
     }
     else {
+        if( vehicle->MyTrack != nullptr ) {
+            // rare failure case where vehicle with length of 0 is added to the track,
+            // treated as error code and consequently deleted, but still remains on the track
+            vehicle->MyTrack->RemoveDynamicObject( vehicle );
+        }
         delete vehicle;
         skip_until( Input, "enddynamic" );
         return nullptr;

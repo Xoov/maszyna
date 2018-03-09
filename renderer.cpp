@@ -186,11 +186,11 @@ opengl_renderer::Init( GLFWwindow *Window ) {
     }
     // preload some common textures
     WriteLog( "Loading common gfx data..." );
-    m_glaretexture = Fetch_Texture( "fx\\lightglare" );
-    m_suntexture = Fetch_Texture( "fx\\sun" );
-    m_moontexture = Fetch_Texture( "fx\\moon" );
+    m_glaretexture = Fetch_Texture( "fx/lightglare" );
+    m_suntexture = Fetch_Texture( "fx/sun" );
+    m_moontexture = Fetch_Texture( "fx/moon" );
     if( m_helpertextureunit >= 0 ) {
-        m_reflectiontexture = Fetch_Texture( "fx\\reflections" );
+        m_reflectiontexture = Fetch_Texture( "fx/reflections" );
     }
     WriteLog( "...gfx data pre-loading done" );
 
@@ -397,7 +397,12 @@ opengl_renderer::Render() {
     Timer::subsystem.gfx_total.start(); // note: gfx_total is actually frame total, clean this up
     Timer::subsystem.gfx_color.start();
     // fetch simulation data
-    m_sunlight = Global.DayLight;
+    if( World.InitPerformed() ) {
+        m_sunlight = Global.DayLight;
+        // quantize sun angle to reduce shadow crawl
+        auto const quantizationstep { 0.004f };
+        m_sunlight.direction = glm::normalize( quantizationstep * glm::roundEven( m_sunlight.direction * ( 1.f / quantizationstep ) ) );
+    }
     // generate new frame
     m_renderpass.draw_mode = rendermode::none; // force setup anew
     m_debugtimestext.clear();
@@ -420,24 +425,7 @@ opengl_renderer::Render() {
         + "; dyn: " + to_string( m_debugstats.dynamics ) + " mod: " + to_string( m_debugstats.models ) + " sub: " + to_string( m_debugstats.submodels )
         + "; trk: " + to_string( m_debugstats.paths ) + " shp: " + to_string( m_debugstats.shapes )
         + " trc: " + to_string( m_debugstats.traction ) + " lin: " + to_string( m_debugstats.lines );
-/*
-    float lightcutoff{},
-        lightexponent{},
-        lightconstant{},
-        lightlinear{};
-    ::glGetLightfv( GL_LIGHT1, GL_SPOT_CUTOFF, &lightcutoff );
-    ::glGetLightfv( GL_LIGHT1, GL_SPOT_EXPONENT, &lightexponent );
-    ::glGetLightfv( GL_LIGHT1, GL_CONSTANT_ATTENUATION, &lightconstant );
-    ::glGetLightfv( GL_LIGHT1, GL_LINEAR_ATTENUATION, &lightlinear );
-    m_debugstatstext =
-        "light1 cutoff: " + to_string( lightcutoff, 2 )
-        + " exponent: " + to_string( lightexponent, 2 )
-        + " constant attn: " + to_string( lightconstant, 2 )
-        + " linear attn: " + to_string( lightlinear, 3 );
-*/
-/*
-    m_debugstatstext = "sun hour angle: " + to_string( -World.Environment.m_sun.getHourAngle(), 6 );
-*/
+
     ++m_framestamp;
 
     return true; // for now always succeed
@@ -1039,7 +1027,7 @@ opengl_renderer::setup_drawing( bool const Alpha ) {
             // setup fog
             if( Global.fFogEnd > 0 ) {
                 // fog setup
-                ::glFogfv( GL_FOG_COLOR, Global.FogColor );
+                ::glFogfv( GL_FOG_COLOR, glm::value_ptr( Global.FogColor ) );
                 ::glFogf( GL_FOG_DENSITY, static_cast<GLfloat>( 1.0 / Global.fFogEnd ) );
                 ::glEnable( GL_FOG );
             }
@@ -1391,18 +1379,18 @@ opengl_renderer::Render( world_environment *Environment ) {
 
     // calculate shadow tone, based on positions of celestial bodies
     m_shadowcolor = interpolate(
-        glm::vec4{ 0.5f, 0.5f, 0.5f, 1.f },
+        glm::vec4{ colors::shadow },
         glm::vec4{ colors::white },
         clamp( -Environment->m_sun.getAngle(), 0.f, 6.f ) / 6.f );
     if( ( Environment->m_sun.getAngle() < -18.f )
      && ( Environment->m_moon.getAngle() > 0.f ) ) {
         // turn on moon shadows after nautical twilight, if the moon is actually up
-        m_shadowcolor = glm::vec4{ 0.5f, 0.5f, 0.5f, 1.f };
+        m_shadowcolor = colors::shadow;
     }
     // soften shadows depending on sky overcast factor
     m_shadowcolor = glm::min(
         colors::white,
-        m_shadowcolor + glm::vec4{ glm::vec3{ 0.5f * Global.Overcast }, 1.f } );
+        m_shadowcolor + ( ( colors::white - colors::shadow ) * Global.Overcast ) );
 
     if( Global.bWireFrame ) {
         // bez nieba w trybie rysowania linii
@@ -1481,7 +1469,14 @@ opengl_renderer::Render( world_environment *Environment ) {
     {
         Bind_Texture( m_moontexture );
         glm::vec3 mooncolor( 255.0f / 255.0f, 242.0f / 255.0f, 231.0f / 255.0f );
-        ::glColor4f( mooncolor.x, mooncolor.y, mooncolor.z, static_cast<GLfloat>( 1.0 - Global.fLuminance * 0.5 ) );
+        // fade the moon if it's near the sun in the sky, especially during the day
+        ::glColor4f(
+            mooncolor.r, mooncolor.g, mooncolor.b,
+            std::max<float>(
+                0.f,
+                1.0
+                - 0.5 * Global.fLuminance
+                - 0.65 * std::max( 0.f, glm::dot( Environment->m_sun.getDirection(), Environment->m_moon.getDirection() ) ) ) );
 
         auto const moonposition = modelview * glm::vec4( Environment->m_moon.getDirection(), 1.0f );
         ::glPushMatrix();
@@ -1813,6 +1808,37 @@ opengl_renderer::Render( cell_sequence::iterator First, cell_sequence::iterator 
                         Render( memcell );
                     }
                 }
+#endif
+#ifdef EU07_USE_DEBUG_CULLING
+                // debug
+                ::glLineWidth( 2.f );
+                float const width = cell->m_area.radius;
+                float const height = cell->m_area.radius * 0.2f;
+                glDisable( GL_LIGHTING );
+                glDisable( GL_TEXTURE_2D );
+                glColor3ub( 255, 128, 128 );
+                glBegin( GL_LINE_LOOP );
+                glVertex3f( -width, height, width );
+                glVertex3f( -width, height, -width );
+                glVertex3f( width, height, -width );
+                glVertex3f( width, height, width );
+                glEnd();
+                glBegin( GL_LINE_LOOP );
+                glVertex3f( -width, 0, width );
+                glVertex3f( -width, 0, -width );
+                glVertex3f( width, 0, -width );
+                glVertex3f( width, 0, width );
+                glEnd();
+                glBegin( GL_LINES );
+                glVertex3f( -width, height, width ); glVertex3f( -width, 0, width );
+                glVertex3f( -width, height, -width ); glVertex3f( -width, 0, -width );
+                glVertex3f( width, height, -width ); glVertex3f( width, 0, -width );
+                glVertex3f( width, height, width ); glVertex3f( width, 0, width );
+                glEnd();
+                glColor3ub( 255, 255, 255 );
+                glEnable( GL_TEXTURE_2D );
+                glEnable( GL_LIGHTING );
+                glLineWidth( 1.f );
 #endif
                 // post-render cleanup
                 ::glPopMatrix();
