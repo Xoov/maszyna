@@ -132,16 +132,8 @@ buffer_manager::create( std::string const &Filename ) {
 
     auto filename { ToLower( Filename ) };
 
-    auto const dotpos { filename.rfind( '.' ) };
-    if( ( dotpos != std::string::npos )
-     && ( dotpos != filename.rfind( ".." ) + 1 ) ) {
-        // trim extension if there's one, but don't mistake folder traverse for extension
-        filename.erase( dotpos );
-    }
-    // convert slashes
-    std::replace(
-        std::begin( filename ), std::end( filename ),
-        '\\', '/' );
+    erase_extension( filename );
+    replace_slashes( filename );
 
     audio::buffer_handle lookup { null_handle };
     std::string filelookup;

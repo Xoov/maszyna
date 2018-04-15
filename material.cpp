@@ -17,8 +17,8 @@ http://mozilla.org/MPL/2.0/.
 // helper, returns potential path part from provided file name
 std::string path( std::string const &Filename ) {
     return (
-        Filename.rfind( '\\' ) != std::string::npos ?
-            Filename.substr( 0, Filename.rfind( '\\' ) + 1 ) :
+        Filename.rfind( '/' ) != std::string::npos ?
+            Filename.substr( 0, Filename.rfind( '/' ) + 1 ) :
             "" );
 }
 
@@ -110,17 +110,10 @@ material_manager::create( std::string const &Filename, bool const Loadnow ) {
     if( filename.find( '|' ) != std::string::npos )
         filename.erase( filename.find( '|' ) ); // po | może być nazwa kolejnej tekstury
 
-    if( ( filename.rfind( '.' ) != std::string::npos )
-     && ( filename.rfind( '.' ) != filename.rfind( ".." ) + 1 ) ) {
-        // we can get extension for .mat or, in legacy files, some image format. just trim it and set it to material file extension
-        filename.erase( filename.rfind( '.' ) );
-    }
-    filename += ".mat";
+    erase_extension( filename );
+    replace_slashes( filename );
 
-    // change slashes to llinux-compatible
-    std::replace(
-        std::begin( filename ), std::end( filename ),
-        '\\', '/' );
+    filename += ".mat";
 
     // try to locate requested material in the databank
     auto const databanklookup = find_in_databank( filename );

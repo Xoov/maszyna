@@ -85,7 +85,6 @@ const double Steel2Steel_friction = 0.15;      //tarcie statyczne
 const double g = 9.81;                     //przyspieszenie ziemskie
 const double SandSpeed = 0.1;              //ile kg/s}
 const double Pirazy2 = 6.2831853071794f;
-#define PI 3.1415926535897f
 
 //-- var, const, procedure ---------------------------------------------------
 static bool const Go = true;
@@ -165,7 +164,8 @@ enum range {
 // start method for devices; exclusive
 enum start {
     manual,
-    automatic
+    automatic,
+    manualwithautofallback
 };
 // recognized vehicle light locations and types; can be combined
 enum light {
@@ -618,6 +618,28 @@ struct TCoupling {
     int sounds { 0 }; // sounds emitted by the coupling devices
 };
 
+// basic approximation of a fuel pump
+// TODO: fuel consumption, optional automatic engine start after activation
+struct fuel_pump {
+
+    bool is_enabled { false }; // device is allowed/requested to operate
+    bool is_active { false }; // device is working
+    start start_type { start::manual };
+};
+
+// basic approximation of a fuel pump
+// TODO: fuel consumption, optional automatic engine start after activation
+struct oil_pump {
+
+    bool is_enabled { false }; // device is allowed/requested to operate
+    bool is_active { false }; // device is working
+    start start_type { start::manual };
+    float resource_amount { 1.f };
+    float pressure_minimum { 0.f }; // lowest acceptable working pressure
+    float pressure_target { 0.f };
+    float pressure_present { 0.f };
+};
+
 class TMoverParameters
 { // Ra: wrapper na kod pascalowy, przejmujący jego funkcje  Q: 20160824 - juz nie wrapper a klasa bazowa :)
 public:
@@ -869,6 +891,7 @@ public:
 	double AccVert = 0.0; // vertical acceleration
 	double nrot = 0.0;
 	double WheelFlat = 0.0;
+    bool TruckHunting { true }; // enable/disable truck hunting calculation
 	/*! rotacja kol [obr/s]*/
 	double EnginePower = 0.0;                  /*! chwilowa moc silnikow*/
 	double dL = 0.0; double Fb = 0.0; double Ff = 0.0;                  /*przesuniecie, sila hamowania i tarcia*/
@@ -903,6 +926,8 @@ public:
 	bool ConverterAllow = false;             /*zezwolenie na prace przetwornicy NBMX*/
     bool ConverterAllowLocal{ true }; // local device state override (most units don't have this fitted so it's set to true not to intefere)
     bool ConverterFlag = false;              /*!  czy wlaczona przetwornica NBMX*/
+    fuel_pump FuelPump;
+    oil_pump OilPump;
 
     int BrakeCtrlPos = -2;               /*nastawa hamulca zespolonego*/
 	double BrakeCtrlPosR = 0.0;                 /*nastawa hamulca zespolonego - plynna dla FV4a*/
@@ -1000,7 +1025,8 @@ public:
 	double dizel_engagestate = 0.0; /*sprzeglo skrzyni biegow: 0 - luz, 1 - wlaczone, 0.5 - wlaczone 50% (z poslizgiem)*/
 	double dizel_engage = 0.0; /*sprzeglo skrzyni biegow: aktualny docisk*/
 	double dizel_automaticgearstatus = 0.0; /*0 - bez zmiany, -1 zmiana na nizszy +1 zmiana na wyzszy*/
-	bool dizel_enginestart = false;      /*czy trwa rozruch silnika*/
+    bool dizel_startup { false }; // engine startup procedure request indicator
+	bool dizel_ignition = false; // engine ignition request indicator
 	double dizel_engagedeltaomega = 0.0;    /*roznica predkosci katowych tarcz sprzegla*/
 	double dizel_n_old = 0.0; /*poredkosc na potrzeby obliczen sprzegiel*/
 	double dizel_Torque = 0.0; /*poredkosc na potrzeby obliczen sprzegiel*/
@@ -1041,8 +1067,10 @@ public:
 
 	bool DoorBlocked = false;    //Czy jest blokada drzwi
 	bool DoorLeftOpened = false;  //stan drzwi
+    double DoorLeftOpenTimer { -1.0 }; // left door closing timer for automatic door type
 	bool DoorRightOpened = false;
-	bool PantFrontUp = false;  //stan patykow 'Winger 160204
+    double DoorRightOpenTimer{ -1.0 }; // right door closing timer for automatic door type
+    bool PantFrontUp = false;  //stan patykow 'Winger 160204
 	bool PantRearUp = false;
 	bool PantFrontSP = true;  //dzwiek patykow 'Winger 010304
     bool PantRearSP = true;
@@ -1187,13 +1215,17 @@ public:
 
 	/*--funkcje dla lokomotyw*/
 	bool DirectionBackward(void);/*! kierunek ruchu*/
+    bool FuelPumpSwitch( bool State, int const Notify = range::consist ); // fuel pump state toggle
+    bool OilPumpSwitch( bool State, int const Notify = range::consist ); // oil pump state toggle
     bool MainSwitch( bool const State, int const Notify = range::consist );/*! wylacznik glowny*/
     bool ConverterSwitch( bool State, int const Notify = range::consist );/*! wl/wyl przetwornicy*/
     bool CompressorSwitch( bool State, int const Notify = range::consist );/*! wl/wyl sprezarki*/
 
 									  /*-funkcje typowe dla lokomotywy elektrycznej*/
 	void ConverterCheck( double const Timestep ); // przetwornica
-	bool FuseOn(void); //bezpiecznik nadamiary
+    void FuelPumpCheck( double const Timestep );
+    void OilPumpCheck( double const Timestep );
+    bool FuseOn(void); //bezpiecznik nadamiary
 	bool FuseFlagCheck(void); // sprawdzanie flagi nadmiarowego
 	void FuseOff(void); // wylaczenie nadmiarowego
     double ShowCurrent( int AmpN ); //pokazuje bezwgl. wartosc pradu na wybranym amperomierzu
@@ -1224,7 +1256,8 @@ public:
 	bool dizel_AutoGearCheck(void);
 	double dizel_fillcheck(int mcp);
 	double dizel_Momentum(double dizel_fill, double n, double dt);
-	bool dizel_Update(double dt);
+    bool dizel_StartupCheck();
+    bool dizel_Update(double dt);
 
 	/* funckje dla wagonow*/
 	bool LoadingDone(double LSpeed, std::string LoadInit);
@@ -1232,8 +1265,9 @@ public:
 	bool DoorRight(bool State, int const Notify = range::consist ); //obsluga drzwi prawych
 	bool DoorBlockedFlag(void); //sprawdzenie blokady drzwi
     bool signal_departure( bool const State, int const Notify = range::consist ); // toggles departure warning
+    void update_autonomous_doors( double const Deltatime ); // automatic door controller update
 
-								/* funkcje dla samochodow*/
+    /* funkcje dla samochodow*/
 	bool ChangeOffsetH(double DeltaOffset);
 
 	/*funkcje ladujace pliki opisujace pojazd*/

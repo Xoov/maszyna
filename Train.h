@@ -70,6 +70,7 @@ class TTrain
     struct state_t {
         std::uint8_t shp;
         std::uint8_t alerter;
+        std::uint8_t radio_stop;
         std::uint8_t motor_resistors;
         std::uint8_t line_breaker;
         std::uint8_t motor_overload;
@@ -212,6 +213,12 @@ class TTrain
     static void OnCommand_linebreakertoggle( TTrain *Train, command_data const &Command );
     static void OnCommand_linebreakeropen( TTrain *Train, command_data const &Command );
     static void OnCommand_linebreakerclose( TTrain *Train, command_data const &Command );
+    static void OnCommand_fuelpumptoggle( TTrain *Train, command_data const &Command );
+    static void OnCommand_fuelpumpenable( TTrain *Train, command_data const &Command );
+    static void OnCommand_fuelpumpdisable( TTrain *Train, command_data const &Command );
+    static void OnCommand_oilpumptoggle( TTrain *Train, command_data const &Command );
+    static void OnCommand_oilpumpenable( TTrain *Train, command_data const &Command );
+    static void OnCommand_oilpumpdisable( TTrain *Train, command_data const &Command );
     static void OnCommand_convertertoggle( TTrain *Train, command_data const &Command );
     static void OnCommand_converterenable( TTrain *Train, command_data const &Command );
     static void OnCommand_converterdisable( TTrain *Train, command_data const &Command );
@@ -401,6 +408,9 @@ public: // reszta może by?publiczna
     TGauge ggSignallingButton;
     TGauge ggDoorSignallingButton;
 
+    TGauge ggFuelPumpButton; // fuel pump switch
+    TGauge ggOilPumpButton; // fuel pump switch
+
     TButton btLampkaPoslizg;
     TButton btLampkaStyczn;
     TButton btLampkaNadmPrzetw;
@@ -446,6 +456,7 @@ public: // reszta może by?publiczna
     TButton btLampkaSprezarkaB;
     TButton btLampkaSprezarkaOff;
     TButton btLampkaSprezarkaBOff;
+    TButton btLampkaFuelPumpOff;
     TButton btLampkaBocznik1;
     TButton btLampkaBocznik2;
     TButton btLampkaBocznik3;
@@ -506,11 +517,18 @@ public: // reszta może by?publiczna
     double fMechPitch;
     struct engineshake_config {
         float scale { 2.f };
-        float fadein_offset { 1.5f };
+        float fadein_offset { 1.5f }; // 90 rpm
         float fadein_factor { 0.3f };
-        float fadeout_offset { 10.f };
+        float fadeout_offset { 10.f }; // 600 rpm
         float fadeout_factor { 0.5f };
     } EngineShake;
+    struct huntingshake_config {
+        float scale { 1.f };
+        float frequency { 1.f };
+        float fadein_begin { 0.f }; // effect start speed in km/h
+        float fadein_end { 0.f }; // full effect speed in km/h
+    } HuntingShake;
+    float HuntingAngle { 0.f }; // crude approximation of hunting oscillation; current angle of sine wave
 
     sound_source dsbReverserKey { sound_placement::internal, EU07_SOUND_CABCONTROLSCUTOFFRANGE }; // hunter-121211
     sound_source dsbNastawnikJazdy { sound_placement::internal, EU07_SOUND_CABCONTROLSCUTOFFRANGE };

@@ -886,6 +886,7 @@ TCommandType TController::TableUpdate(double &fVelDes, double &fDist, double &fN
                                     // also ignore any horn cue that may be potentially set below 1 km/h and before the actual full stop
                                     iDrivigFlags &= ~( moveStartHorn | moveStartHornNow );
                                 }
+
                                 // perform loading/unloading
                                 auto const platformside = static_cast<int>( std::floor( sSpeedTable[ i ].evEvent->ValueGet( 2 ) ) ) % 10;
                                 auto const exchangetime = simulation::Station.update_load( pVehicles[ 0 ], *TrainParams, platformside );
@@ -1953,19 +1954,26 @@ bool TController::CheckVehicles(TOrders user)
             }
             else if (OrderCurrentGet() & (Shunt | Connect))
             {
-                Lights(16, (pVehicles[1]->MoverParameters->CabNo) ?
-                           1 :
-                               0); //światła manewrowe (Tb1) na pojeździe z napędem
+                Lights(
+                    light::headlight_right,
+                    ( pVehicles[ 1 ]->MoverParameters->CabNo ) ?
+                        1 :
+                        0 ); //światła manewrowe (Tb1) na pojeździe z napędem
                 if (OrderCurrentGet() & Connect) // jeśli łączenie, skanować dalej
                     pVehicles[0]->fScanDist = 5000.0; // odległość skanowania w poszukiwaniu innych pojazdów
             }
-            else if (OrderCurrentGet() == Disconnect)
-                if (mvOccupied->ActiveDir > 0) // jak ma kierunek do przodu
-                    Lights(16, 0); //światła manewrowe (Tb1) tylko z przodu, aby nie pozostawić
-                // odczepionego ze światłem
-                else // jak dociska
-                    Lights(0, 16); //światła manewrowe (Tb1) tylko z przodu, aby nie pozostawić
-            // odczepionego ze światłem
+            else if( OrderCurrentGet() == Disconnect ) {
+                if( mvOccupied->ActiveDir > 0 ) {
+                    // jak ma kierunek do przodu
+                    // światła manewrowe (Tb1) tylko z przodu, aby nie pozostawić odczepionego ze światłem
+                    Lights( light::headlight_right, 0 );
+                }
+                else {
+                    // jak dociska
+                    // światła manewrowe (Tb1) tylko z przodu, aby nie pozostawić odczepionego ze światłem
+                    Lights( 0, light::headlight_right );
+                }
+            }
         }
         else // Ra 2014-02: lepiej tu niż w pętli obsługującej komendy, bo tam się zmieni informacja
             // o składzie
@@ -2217,7 +2225,12 @@ bool TController::PrepareEngine()
     }
     if (AIControllFlag) {
         // część wykonawcza dla sterowania przez komputer
-        mvOccupied->BatterySwitch(true);
+        mvOccupied->BatterySwitch( true );
+        if( ( mvOccupied->EngineType == DieselElectric )
+         || ( mvOccupied->EngineType == DieselEngine ) ) {
+            mvOccupied->FuelPumpSwitch( true );
+            mvOccupied->OilPumpSwitch( true );
+        }
         if (mvControlling->EnginePowerSource.SourceType == CurrentCollector)
         { // jeśli silnikowy jest pantografującym
             mvControlling->PantFront( true );
@@ -2285,7 +2298,7 @@ bool TController::PrepareEngine()
             else if (false == mvControlling->Mains) {
                 while (DecSpeed(true))
                     ; // zerowanie napędu
-
+/*
                 if( ( mvOccupied->EngineType == DieselEngine )
                  || ( mvOccupied->EngineType == DieselElectric ) ) {
                     // start helper devices before spinning up the engine
@@ -2293,6 +2306,7 @@ bool TController::PrepareEngine()
                     mvOccupied->ConverterSwitch( true );
                     mvOccupied->CompressorSwitch( true );
                 }
+*/
                 if( mvOccupied->TrainType == dt_SN61 ) {
                     // specjalnie dla SN61 żeby nie zgasł
                     if( mvControlling->RList[ mvControlling->MainCtrlPos ].Mn == 0 ) {
@@ -3010,7 +3024,6 @@ void TController::Doors( bool const Open, int const Side ) {
         // otwieranie drzwi
         // otwieranie drzwi w składach wagonowych - docelowo wysyłać komendę zezwolenia na otwarcie drzwi
         // tu będzie jeszcze długość peronu zaokrąglona do 10m (20m bezpieczniej, bo nie modyfikuje bitu 1)
-        // p7=platform side (1:left, 2:right, 3:both)
         auto *vehicle = pVehicles[0]; // pojazd na czole składu
         while( vehicle != nullptr ) {
             // wagony muszą mieć baterię załączoną do otwarcia drzwi...
@@ -3020,7 +3033,7 @@ void TController::Doors( bool const Open, int const Side ) {
                 // if the door are controlled by the driver, we let the user operate them...
                 if( true == AIControllFlag ) {
                     // ...unless this user is an ai
-                    // p7=platform side (1:left, 2:right, 3:both)
+                    // Side=platform side (1:left, 2:right, 3:both)
                     // jeśli jedzie do tyłu, to drzwi otwiera odwrotnie
                     auto const lewe = ( vehicle->DirectionGet() > 0 ) ? 1 : 2;
                     auto const prawe = 3 - lewe;
@@ -3036,12 +3049,17 @@ void TController::Doors( bool const Open, int const Side ) {
     }
     else {
         // zamykanie
+        if( false == doors_open() ) {
+            // the doors are already closed, we can skip all hard work
+            iDrivigFlags &= ~moveDoorOpened;
+        }
+
         if( AIControllFlag ) {
             if( ( true == mvOccupied->DoorClosureWarning )
              && ( false == mvOccupied->DepartureSignal )
              && ( true == TestFlag( iDrivigFlags, moveDoorOpened ) ) ) {
                 mvOccupied->signal_departure( true ); // załącenie bzyczka
-                fActionTime = -3.0 - 0.1 * Random( 10 ); // 3-4 second wait
+                fActionTime = -1.5 - 0.1 * Random( 10 ); // 1.5-2.5 second wait
             }
         }
 
@@ -3052,16 +3070,40 @@ void TController::Doors( bool const Open, int const Side ) {
             auto *vehicle = pVehicles[ 0 ]; // pojazd na czole składu
             while( vehicle != nullptr ) {
                 // zamykanie drzwi w pojazdach - flaga zezwolenia była by lepsza
-                if( vehicle->MoverParameters->DoorCloseCtrl != control::passenger ) {
+                if( vehicle->MoverParameters->DoorCloseCtrl != control::autonomous ) {
                     vehicle->MoverParameters->DoorLeft( false, range::local ); // w lokomotywie można by nie zamykać...
                     vehicle->MoverParameters->DoorRight( false, range::local );
                 }
                 vehicle = vehicle->Next(); // pojazd podłączony z tyłu (patrząc od czoła)
             }
-            fActionTime = -2.5 - 0.1 * Random( 10 ); // 2.5-3.5 sec wait, +potentially 0.5 remaining
+            fActionTime = -2.0 - 0.1 * Random( 15 ); // 2.0-3.5 sec wait, +potentially 0.5 remaining
             iDrivigFlags &= ~moveDoorOpened; // zostały zamknięte - nie wykonywać drugi raz
+
+            if( Random( 100 ) < Random( 100 ) ) {
+                // potentially turn off the warning before actual departure
+                // TBD, TODO: dedicated buzzer duration counter
+                mvOccupied->signal_departure( false );
+            }
+
         }
     }
+}
+
+// returns true if any vehicle in the consist has open doors
+bool
+TController::doors_open() const {
+
+    auto *vehicle = pVehicles[ 0 ]; // pojazd na czole składu
+    while( vehicle != nullptr ) {
+        if( ( vehicle->MoverParameters->DoorRightOpened == true )
+         || ( vehicle->MoverParameters->DoorLeftOpened == true ) ) {
+            // any open door is enough
+            return true;
+        }
+        vehicle = vehicle->Next();
+    }
+    // if we're still here there's nothing open
+    return false;
 }
 
 void TController::RecognizeCommand()
@@ -3128,6 +3170,9 @@ bool TController::PutCommand( std::string NewCommand, double NewValue1, double N
             }
             else
             { // inicjacja pierwszego przystanku i pobranie jego nazwy
+                // HACK: clear the potentially set door state flag to ensure door get opened if applicable
+                iDrivigFlags &= ~( moveDoorOpened );
+
                 TrainParams->UpdateMTable( simulation::Time, TrainParams->NextStationName );
                 TrainParams->StationIndexInc(); // przejście do następnej
                 iStationStart = TrainParams->StationIndex;
@@ -3903,8 +3948,7 @@ TController::UpdateSituation(double dt) {
             // jeśli stanął już blisko, unikając zderzenia i można próbować podłączyć
             fMinProximityDist = -0.5;
             fMaxProximityDist =  0.0; //[m] dojechać maksymalnie
-            fVelPlus = 0.5; // dopuszczalne przekroczenie prędkości na ograniczeniu bez
-            // hamowania
+            fVelPlus = 0.5; // dopuszczalne przekroczenie prędkości na ograniczeniu bez hamowania
             fVelMinus = 0.5; // margines prędkości powodujący załączenie napędu
             if (AIControllFlag)
             { // to robi tylko AI, wersję dla człowieka trzeba dopiero zrobić
@@ -3952,11 +3996,7 @@ TController::UpdateSituation(double dt) {
                     CheckVehicles(); // sprawdzić światła nowego składu
                     JumpToNextOrder(); // wykonanie następnej komendy
                 }
-/*
-                // NOTE: disabled as speed limit is decided in another place based on distance to potential target
-                else
-                    SetVelocity(2.0, 0.0); // jazda w ustawionym kierunku z prędkością 2 (18s)
-*/
+
             } // if (AIControllFlag) //koniec zblokowania, bo była zmienna lokalna
         }
         else {
@@ -5167,8 +5207,13 @@ void TController::JumpToFirstOrder()
 
 void TController::OrderCheck()
 { // reakcja na zmianę rozkazu
-    if (OrderList[OrderPos] & (Shunt | Connect | Obey_train))
+    if( OrderList[ OrderPos ] & ( Shunt | Connect | Obey_train ) ) {
         CheckVehicles(); // sprawdzić światła
+    }
+    if( OrderList[ OrderPos ] & ( Shunt | Connect ) ) {
+        // HACK: ensure consist doors will be closed on departure
+        iDrivigFlags |= moveDoorOpened;
+    }
     if (OrderList[OrderPos] & Change_direction) // może być nałożona na inną i wtedy ma priorytet
         iDirectionOrder = -iDirection; // trzeba zmienić jawnie, bo się nie domyśli
     else if (OrderList[OrderPos] == Obey_train)

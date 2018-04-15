@@ -1409,23 +1409,10 @@ double TMoverParameters::ComputeMovement(double dt, double dt1, const TTrackShap
     // hamulec antypoślizgowy - wyłączanie
     if ((BrakeSlippingTimer > 0.8) && (ASBType != 128)) // ASBSpeed=0.8
         Hamulec->ASB(0);
-    // SetFlag(BrakeStatus,-b_antislip);
     BrakeSlippingTimer += dt;
-    // sypanie piasku - wyłączone i piasek się nie kończy - błędy AI
-    // if AIControllFlag then
-    // if SandDose then
-    //  if Sand>0 then
-    //   begin
-    //     Sand:=Sand-NPoweredAxles*SandSpeed*dt;
-    //     if Random<dt then SandDose:=false;
-    //   end
-    //  else
-    //   begin
-    //     SandDose:=false;
-    //     Sand:=0;
-    //   end;
-    // czuwak/SHP
-    // if (Vel>10) and (not DebugmodeFlag) then
+    // automatic doors
+    update_autonomous_doors( dt );
+    // security system
     if (!DebugModeFlag)
         SecuritySystemCheck(dt1);
 
@@ -1533,6 +1520,8 @@ double TMoverParameters::FastComputeMovement(double dt, const TTrackShape &Shape
     if ((BrakeSlippingTimer > 0.8) && (ASBType != 128)) // ASBSpeed=0.8
         Hamulec->ASB(0);
     BrakeSlippingTimer += dt;
+    // automatic doors
+    update_autonomous_doors( dt );
 
     return d;
 };
@@ -1565,6 +1554,10 @@ double TMoverParameters::ShowEngineRotation(int VehN)
 // sprawdzanie przetwornicy
 void TMoverParameters::ConverterCheck( double const Timestep ) {
     // TODO: move other converter checks here, to have it all in one place for potential device object
+    if( ConverterStart == start::automatic ) {
+        ConverterAllow = Mains;
+    }
+
     if( ( ConverterAllow )
      && ( ConverterAllowLocal )
      && ( false == PantPressLockActive )
@@ -1582,6 +1575,59 @@ void TMoverParameters::ConverterCheck( double const Timestep ) {
         ConverterStartDelayTimer = static_cast<double>( ConverterStartDelay );
     }
 };
+
+// fuel pump status update
+void TMoverParameters::FuelPumpCheck( double const Timestep ) {
+
+    if( FuelPump.start_type == start::automatic ) {
+        FuelPump.is_enabled = ( dizel_startup || Mains );
+    }
+    FuelPump.is_active = (
+        ( true == FuelPump.is_enabled )
+     && ( true == Battery ) );
+}
+
+// oil pump status update
+void TMoverParameters::OilPumpCheck( double const Timestep ) {
+
+    OilPump.is_active =
+        ( ( true == Battery )
+       && ( OilPump.start_type == start::manual ? ( OilPump.is_enabled ) :
+            OilPump.start_type == start::automatic ? ( dizel_startup || Mains ) :
+            OilPump.start_type == start::manualwithautofallback ? ( OilPump.is_enabled || dizel_startup || Mains ) :
+            false ) ); // shouldn't ever get this far but, eh
+
+    auto const maxrevolutions {
+        EngineType == DieselEngine ?
+            dizel_nmax :
+            DElist[ MainCtrlPosNo ].RPM / 60.0 };
+    auto const minpressure {
+        OilPump.pressure_minimum > 0.f ?
+            OilPump.pressure_minimum :
+            0.1f }; // arbitrary fallback value
+    auto const maxpressure { 0.65f }; // arbitrary value
+
+    OilPump.pressure_target = (
+        false == OilPump.is_active ? 0.f :
+        enrot > 0.1 ? std::max<float>( minpressure, maxpressure * clamp( enrot / maxrevolutions, 0.0, 1.0 ) ) * OilPump.resource_amount :
+        minpressure );
+
+    if( OilPump.pressure_present < OilPump.pressure_target ) {
+        // TODO: scale change rate from 0.01-0.05 with oil/engine temperature/idle time
+        OilPump.pressure_present =
+            std::min<float>(
+                OilPump.pressure_target,
+                OilPump.pressure_present + ( enrot > 5.0 ? 0.05 : 0.035 ) * Timestep );
+    }
+    if( OilPump.pressure_present > OilPump.pressure_target ) {
+        OilPump.pressure_present =
+            std::max<float>(
+                OilPump.pressure_target,
+                OilPump.pressure_present - 0.01 * Timestep );
+    }
+    OilPump.pressure_present = clamp( OilPump.pressure_present, 0.f, 1.5f );
+}
+
 
 double TMoverParameters::ShowCurrent(int AmpN)
 { // Odczyt poboru prądu na podanym amperomierzu
@@ -2350,13 +2396,63 @@ bool TMoverParameters::AntiSlippingButton(void)
     return (AntiSlippingBrake() /*|| Sandbox(true)*/);
 }
 
+// fuel pump state toggle
+bool TMoverParameters::FuelPumpSwitch( bool State, int const Notify ) {
+
+    if( FuelPump.start_type == start::automatic ) {
+        // automatic fuel pump ignores 'manual' state commands
+        return false;
+    }
+
+    bool const initialstate { FuelPump.is_enabled };
+
+    FuelPump.is_enabled = State;
+
+    if( Notify != range::local ) {
+        SendCtrlToNext(
+            "FuelPumpSwitch",
+            ( FuelPump.is_enabled ? 1 : 0 ),
+            CabNo,
+            ( Notify == range::unit ?
+                coupling::control | coupling::permanent :
+                coupling::control ) );
+    }
+
+    return ( FuelPump.is_enabled != initialstate );
+}
+
+// oil pump state toggle
+bool TMoverParameters::OilPumpSwitch( bool State, int const Notify ) {
+
+    if( OilPump.start_type == start::automatic ) {
+        // automatic pump ignores 'manual' state commands
+        return false;
+    }
+
+    bool const initialstate { OilPump.is_enabled };
+
+    OilPump.is_enabled = State;
+
+    if( Notify != range::local ) {
+        SendCtrlToNext(
+            "OilPumpSwitch",
+            ( OilPump.is_enabled ? 1 : 0 ),
+            CabNo,
+            ( Notify == range::unit ?
+                coupling::control | coupling::permanent :
+                coupling::control ) );
+    }
+
+    return ( OilPump.is_enabled != initialstate );
+}
+
 // *************************************************************************************************
 // Q: 20160713
 // włączenie / wyłączenie obwodu głownego
 // *************************************************************************************************
 bool TMoverParameters::MainSwitch( bool const State, int const Notify )
 {
-    bool MS = false; // Ra: przeniesione z końca
+    bool const initialstate { Mains || dizel_startup };
 
     if( ( Mains != State )
      && ( MainCtrlPosNo > 0 ) ) {
@@ -2368,46 +2464,45 @@ bool TMoverParameters::MainSwitch( bool const State, int const Notify )
            && ( false == TestFlag( DamageFlag, dtrain_out ) )
            && ( false == TestFlag( EngDmgFlag, 1 ) ) ) ) {
 
-            if( true == Mains ) {
-                // jeśli był załączony
-                if( Notify != range::local ) {
-                    // wysłanie wyłączenia do pozostałych?
-                    SendCtrlToNext(
-                        "MainSwitch", int( State ), CabNo,
-                        ( Notify == range::unit ?
-                            coupling::control | coupling::permanent :
-                            coupling::control ) );
+            if( true == State ) {
+                // switch on
+                if( ( EngineType == DieselEngine )
+                 || ( EngineType == DieselElectric ) ) {
+                    // launch diesel engine startup procedure
+                    dizel_startup = true;
+                }
+                else {
+                    Mains = true;
                 }
             }
-            Mains = State;
-            MS = true; // wartość zwrotna
-            LastSwitchingTime = 0;
-
-            if( true == Mains ) {
-                // jeśli został załączony
-                if( Notify != range::local ) {
-                    // wysłanie wyłączenia do pozostałych?
-                    SendCtrlToNext(
-                        "MainSwitch", int( State ), CabNo,
-                        ( Notify == range::unit ?
-                            coupling::control | coupling::permanent :
-                            coupling::control ) );
-                }
+            else {
+                Mains = false;
             }
-            if( ( EngineType == DieselEngine )
-             || ( EngineType == DieselElectric ) ) {
 
-                dizel_enginestart = State;
-            }
             if( ( TrainType == dt_EZT )
              && ( false == State ) ) {
 
                 ConvOvldFlag = true;
             }
+
+            if( Mains != initialstate ) {
+                LastSwitchingTime = 0;
+            }
+
+            if( Notify != range::local ) {
+                // pass the command to other vehicles
+                SendCtrlToNext(
+                    "MainSwitch",
+                    ( State ? 1 : 0 ),
+                    CabNo,
+                    ( Notify == range::unit ?
+                        coupling::control | coupling::permanent :
+                        coupling::control ) );
+            }
         }
     }
-    // else MainSwitch:=false;
-    return MS;
+
+    return ( ( Mains || dizel_startup ) != initialstate );
 }
 
 // *************************************************************************************************
@@ -2422,8 +2517,6 @@ bool TMoverParameters::ConverterSwitch( bool State, int const Notify )
     {
         ConverterAllow = State;
         CS = true;
-        if (CompressorPower == 2)
-            CompressorAllow = ConverterAllow;
     }
     if( ConverterAllow == true ) {
         if( Notify != range::local ) {
@@ -2453,11 +2546,13 @@ bool TMoverParameters::ConverterSwitch( bool State, int const Notify )
 // *************************************************************************************************
 bool TMoverParameters::CompressorSwitch( bool State, int const Notify )
 {
+    if( CompressorPower > 1 ) {
+        // only pay attention if the compressor can be controlled manually
+        return false;
+    }
+
     bool CS = false; // Ra: normalnie chyba tak?
-    // if State=true then
-    //  if ((CompressorPower=2) and (not ConverterAllow)) then
-    //   State:=false; //yB: to juz niepotrzebne
-    if ((CompressorAllow != State) && (CompressorPower < 2))
+    if ( CompressorAllow != State )
     {
         CompressorAllow = State;
         CS = true;
@@ -3034,6 +3129,8 @@ void TMoverParameters::UpdateBrakePressure(double dt)
     dpLocalValve = 0;
     dpBrake = 0;
 
+    Hamulec->ForceLeak( dt * AirLeakRate * 0.25 ); // fake air leaks from brake system reservoirs
+
     BrakePress = Hamulec->GetBCP();
     //  BrakePress:=(Hamulec as TEst4).ImplsRes.pa;
     Volume = Hamulec->GetBRP();
@@ -3043,88 +3140,175 @@ void TMoverParameters::UpdateBrakePressure(double dt)
 // Q: 20160712
 // Obliczanie pracy sprężarki
 // *************************************************************************************************
+// TODO: clean the method up, a lot of the code is redundant
 void TMoverParameters::CompressorCheck(double dt)
 {
+    if( VeselVolume == 0.0 ) { return; }
+
     CompressedVolume = std::max( 0.0, CompressedVolume - dt * AirLeakRate * 0.1 ); // nieszczelności: 0.001=1l/s
 
-    // if (CompressorSpeed>0.0) then //ten warunek został sprawdzony przy wywołaniu funkcji
-    if (VeselVolume > 0)
-    {
-        if (MaxCompressor - MinCompressor < 0.0001)
-        {
-            //     if (Mains && (MainCtrlPos > 1))
-            if (CompressorAllow && CompressorAllowLocal && Mains && (MainCtrlPos > 0))
-            {
-                if (Compressor < MaxCompressor)
-                    if ((EngineType == DieselElectric) && (CompressorPower > 0))
-                        CompressedVolume += dt * CompressorSpeed *
-                                            (2.0 * MaxCompressor - Compressor) / MaxCompressor *
-                                            (DElist[MainCtrlPos].RPM / DElist[MainCtrlPosNo].RPM);
-                    else
-                    {
-                        CompressedVolume +=
-                            dt * CompressorSpeed * (2.0 * MaxCompressor - Compressor) / MaxCompressor;
-                        TotalCurrent += 0.0015 
-							* Voltage; // tymczasowo tylko obciążenie sprężarki, tak z 5A na sprężarkę
-                    }
+    if( ( true == CompressorGovernorLock )
+     && ( Compressor < MinCompressor ) ) {
+        // if the pressure drops below the cut-in level, we can reset compressor governor
+        // TBD, TODO: don't operate the lock without battery power?
+        CompressorGovernorLock = false;
+    }
+
+    if( CompressorPower == 2 ) {
+        CompressorAllow = ConverterAllow;
+    }
+
+    if (MaxCompressor - MinCompressor < 0.0001) {
+        // TODO: investigate purpose of this branch and whether it can be removed as it duplicates later code
+        if( ( true == CompressorAllow )
+         && ( true == CompressorAllowLocal )
+         && ( true == Mains )
+         && ( MainCtrlPos > 0 ) ) {
+            if( Compressor < MaxCompressor ) {
+                if( ( EngineType == DieselElectric )
+                 && ( CompressorPower > 0 ) ) {
+                    CompressedVolume +=
+                        CompressorSpeed
+                        * ( 2.0 * MaxCompressor - Compressor ) / MaxCompressor
+                        * ( DElist[ MainCtrlPos ].RPM / DElist[ MainCtrlPosNo ].RPM )
+                        * dt;
+                }
+                else {
+                    CompressedVolume +=
+                        CompressorSpeed
+                        * ( 2.0 * MaxCompressor - Compressor ) / MaxCompressor
+                        * dt;
+                    TotalCurrent += 0.0015 * Voltage; // tymczasowo tylko obciążenie sprężarki, tak z 5A na sprężarkę
+                }
+            }
+            else {
+                CompressedVolume = CompressedVolume * 0.8;
+                SetFlag(SoundFlag, sound::relay | sound::loud);
+            }
+        }
+    }
+    else {
+        if( CompressorPower == 3 ) {
+            // experimental: make sure compressor coupled with diesel engine is always ready for work
+            CompressorAllow = true;
+        }
+        if (CompressorFlag) // jeśli sprężarka załączona
+        { // sprawdzić możliwe warunki wyłączenia sprężarki
+            if (CompressorPower == 5) // jeśli zasilanie z sąsiedniego członu
+            { // zasilanie sprężarki w członie ra z członu silnikowego (sprzęg 1)
+                if (Couplers[1].Connected != NULL)
+                    CompressorFlag =
+                        ( Couplers[ 1 ].Connected->CompressorAllow
+                       && Couplers[ 1 ].Connected->CompressorAllowLocal
+                       && Couplers[ 1 ].Connected->Mains
+                       && Couplers[ 1 ].Connected->ConverterFlag );
                 else
-                {
-                    CompressedVolume = CompressedVolume * 0.8;
-                    SetFlag(SoundFlag, sound::relay | sound::loud);
-                    // SetFlag(SoundFlag, sound::loud);
+                    CompressorFlag = false; // bez tamtego członu nie zadziała
+            }
+            else if (CompressorPower == 4) // jeśli zasilanie z poprzedniego członu
+            { // zasilanie sprężarki w członie ra z członu silnikowego (sprzęg 1)
+                if (Couplers[0].Connected != NULL)
+                    CompressorFlag =
+                        ( Couplers[ 0 ].Connected->CompressorAllow
+                       && Couplers[ 0 ].Connected->CompressorAllowLocal
+                       && Couplers[ 0 ].Connected->Mains
+                       && Couplers[ 0 ].Connected->ConverterFlag );
+                else
+                    CompressorFlag = false; // bez tamtego członu nie zadziała
+            }
+            else
+                CompressorFlag =
+                    ( ( CompressorAllow ) 
+                   && ( CompressorAllowLocal )
+                   && ( Mains )
+                   && ( ( ConverterFlag )
+                     || ( CompressorPower == 0 )
+                     || ( CompressorPower == 3 ) ) );
+
+            if( Compressor > MaxCompressor ) {
+                // wyłącznik ciśnieniowy jest niezależny od sposobu zasilania
+                // TBD, TODO: don't operate the lock without battery power?
+                if( CompressorPower == 3 ) {
+                    // if the compressor is powered directly by the engine the lock can't turn it off and instead just changes the output
+                    if( false == CompressorGovernorLock ) {
+                        // emit relay sound when the lock engages (the state change itself is below) and presumably changes where the air goes
+                        SetFlag( SoundFlag, sound::relay | sound::loud );
+                    }
+                }
+                else {
+                    // if the compressor isn't coupled with the engine the lock can control its state freely
+                    CompressorFlag = false;
+                }
+                CompressorGovernorLock = true; // prevent manual activation until the pressure goes below cut-in level
+            }
+
+            if( ( TrainType == dt_ET41 )
+             || ( TrainType == dt_ET42 ) ) {
+                // for these multi-unit engines compressors turn off whenever any of them was affected by the governor
+                // NOTE: this is crude implementation, TODO: re-implement when a more elegant/flexible system is in place
+                if( ( Couplers[ 1 ].Connected != nullptr )
+                 && ( true == TestFlag( Couplers[ 1 ].CouplingFlag, coupling::permanent ) ) ) {
+                    // the first unit isn't allowed to start its compressor until second unit can start its own as well
+                    CompressorFlag &= ( Couplers[ 1 ].Connected->CompressorGovernorLock == false );
+                }
+                if( ( Couplers[ 0 ].Connected != nullptr )
+                 && ( true == TestFlag( Couplers[ 0 ].CouplingFlag, coupling::permanent ) ) ) {
+                    // the second unit isn't allowed to start its compressor until first unit can start its own as well
+                    CompressorFlag &= ( Couplers[ 0 ].Connected->CompressorGovernorLock == false );
                 }
             }
         }
-        else
-        {
-            if( ( EngineType == DieselEngine )
-             && ( CompressorPower == 0 ) ) {
-                // experimental: make sure compressor coupled with diesel engine is always ready for work
-                CompressorAllow = true;
-            }
-            if (CompressorFlag) // jeśli sprężarka załączona
-            { // sprawdzić możliwe warunki wyłączenia sprężarki
-                if (CompressorPower == 5) // jeśli zasilanie z sąsiedniego członu
+        else {
+            // jeśli nie załączona
+            if( ( LastSwitchingTime > CtrlDelay )
+             && ( ( Compressor < MinCompressor )
+               || ( ( Compressor < MaxCompressor )
+                 && ( false == CompressorGovernorLock ) ) ) ) {
+                    // załączenie przy małym ciśnieniu
+                    // jeśli nie załączona, a ciśnienie za małe
+                    // or if the switch is on and the pressure isn't maxed
+                if( CompressorPower == 5 ) // jeśli zasilanie z następnego członu
                 { // zasilanie sprężarki w członie ra z członu silnikowego (sprzęg 1)
-                    if (Couplers[1].Connected != NULL)
+                    if( Couplers[ 1 ].Connected != nullptr ) {
                         CompressorFlag =
                             ( Couplers[ 1 ].Connected->CompressorAllow
                            && Couplers[ 1 ].Connected->CompressorAllowLocal
                            && Couplers[ 1 ].Connected->Mains
                            && Couplers[ 1 ].Connected->ConverterFlag );
-                    else
+                        }
+                    else {
                         CompressorFlag = false; // bez tamtego członu nie zadziała
+                    }
                 }
-                else if (CompressorPower == 4) // jeśli zasilanie z poprzedniego członu
+                else if( CompressorPower == 4 ) // jeśli zasilanie z poprzedniego członu
                 { // zasilanie sprężarki w członie ra z członu silnikowego (sprzęg 1)
-                    if (Couplers[0].Connected != NULL)
+                    if( Couplers[ 0 ].Connected != nullptr ) {
                         CompressorFlag =
                             ( Couplers[ 0 ].Connected->CompressorAllow
                            && Couplers[ 0 ].Connected->CompressorAllowLocal
                            && Couplers[ 0 ].Connected->Mains
                            && Couplers[ 0 ].Connected->ConverterFlag );
-                    else
+                    }
+                    else {
                         CompressorFlag = false; // bez tamtego członu nie zadziała
+                    }
                 }
-                else
+                else {
                     CompressorFlag =
-                        ( ( CompressorAllow ) 
+                        ( ( CompressorAllow )
                        && ( CompressorAllowLocal )
                        && ( Mains )
                        && ( ( ConverterFlag )
-                         || ( CompressorPower == 0 ) ) );
-
-                if( Compressor > MaxCompressor ) {
-                    // wyłącznik ciśnieniowy jest niezależny od sposobu zasilania
-                    CompressorFlag = false;
-                    CompressorGovernorLock = true; // prevent manual activation until the pressure goes below cut-in level
+                         || ( CompressorPower == 0 )
+                         || ( CompressorPower == 3 ) ) );
                 }
 
+                // NOTE: crude way to enforce simultaneous activation of compressors in multi-unit setups
+                // TODO: replace this with a more universal activation system down the road
                 if( ( TrainType == dt_ET41 )
                  || ( TrainType == dt_ET42 ) ) {
-                    // for these multi-unit engines compressors turn off whenever any of them was affected by the governor
-                    // NOTE: this is crude implementation, TODO: re-implement when a more elegant/flexible system is in place
-                    if( ( Couplers[ 1 ].Connected != nullptr )
+
+                    if( ( Couplers[1].Connected != nullptr )
                      && ( true == TestFlag( Couplers[ 1 ].CouplingFlag, coupling::permanent ) ) ) {
                         // the first unit isn't allowed to start its compressor until second unit can start its own as well
                         CompressorFlag &= ( Couplers[ 1 ].Connected->CompressorGovernorLock == false );
@@ -3135,110 +3319,54 @@ void TMoverParameters::CompressorCheck(double dt)
                         CompressorFlag &= ( Couplers[ 0 ].Connected->CompressorGovernorLock == false );
                     }
                 }
+
+                if( CompressorFlag ) {
+                    // jeśli została załączona
+                    LastSwitchingTime = 0; // to trzeba ograniczyć ponowne włączenie
+                }
+            }
+        }
+
+        if( CompressorFlag ) {
+            // working compressor adds air to the air reservoir
+            if( CompressorPower == 3 ) {
+                // the compressor is coupled with the diesel engine, engine revolutions affect the output
+                if( false == CompressorGovernorLock ) {
+                    auto const enginefactor { (
+                        EngineType == DieselElectric ? ( DElist[ MainCtrlPos ].RPM / DElist[ MainCtrlPosNo ].RPM ) :
+                        EngineType == DieselEngine ? ( std::abs( enrot ) / nmax ) :
+                        1.0 ) }; // shouldn't ever get here but, eh
+                    CompressedVolume +=
+                        CompressorSpeed
+                        * ( 2.0 * MaxCompressor - Compressor ) / MaxCompressor
+                        * enginefactor
+                        * dt;
+                }
+/*
+                else {
+                      // the lock is active, air is being vented out at arbitrary rate
+                    CompressedVolume -= 0.01 * dt;
+                }
+*/
             }
             else {
-                // jeśli nie załączona
-                if( Compressor < MinCompressor ) {
-                    // if the pressure drops below the cut-in level, we can reset compressor governor
-                    CompressorGovernorLock = false;
+                // the compressor is a stand-alone device, working at steady pace
+                CompressedVolume +=
+                    CompressorSpeed
+                    * ( 2.0 * MaxCompressor - Compressor ) / MaxCompressor
+                    * dt;
+
+                if( ( CompressorPower == 5 ) && ( Couplers[ 1 ].Connected != NULL ) ) {
+                    // tymczasowo tylko obciążenie sprężarki, tak z 5A na sprężarkę
+                    Couplers[ 1 ].Connected->TotalCurrent += 0.0015 * Couplers[ 1 ].Connected->Voltage;
                 }
-
-                if( ( ( Compressor < MinCompressor )
-                   || ( ( Compressor < MaxCompressor )
-                     && ( false == CompressorGovernorLock ) ) )
-                 && ( LastSwitchingTime > CtrlDelay ) ) {
-                       // załączenie przy małym ciśnieniu
-                       // jeśli nie załączona, a ciśnienie za małe
-                       // or if the switch is on and the pressure isn't maxed
-                    if( CompressorPower == 5 ) // jeśli zasilanie z następnego członu
-                    { // zasilanie sprężarki w członie ra z członu silnikowego (sprzęg 1)
-                        if( Couplers[ 1 ].Connected != nullptr ) {
-                            CompressorFlag =
-                                ( Couplers[ 1 ].Connected->CompressorAllow
-                               && Couplers[ 1 ].Connected->CompressorAllowLocal
-                               && Couplers[ 1 ].Connected->Mains
-                               && Couplers[ 1 ].Connected->ConverterFlag );
-                            }
-                        else {
-                            CompressorFlag = false; // bez tamtego członu nie zadziała
-                        }
-                    }
-                    else if( CompressorPower == 4 ) // jeśli zasilanie z poprzedniego członu
-                    { // zasilanie sprężarki w członie ra z członu silnikowego (sprzęg 1)
-                        if( Couplers[ 0 ].Connected != nullptr ) {
-                            CompressorFlag =
-                                ( Couplers[ 0 ].Connected->CompressorAllow
-                               && Couplers[ 0 ].Connected->CompressorAllowLocal
-                               && Couplers[ 0 ].Connected->Mains
-                               && Couplers[ 0 ].Connected->ConverterFlag );
-                        }
-                        else {
-                            CompressorFlag = false; // bez tamtego członu nie zadziała
-                        }
-                    }
-                    else {
-                        CompressorFlag =
-                            ( ( CompressorAllow )
-                           && ( CompressorAllowLocal )
-                           && ( Mains )
-                           && ( ( ConverterFlag )
-                             || ( CompressorPower == 0 ) ) );
-                    }
-
-                    // NOTE: crude way to enforce simultaneous activation of compressors in multi-unit setups
-                    // TODO: replace this with a more universal activation system down the road
-                    if( ( TrainType == dt_ET41 )
-                     || ( TrainType == dt_ET42 ) ) {
-
-                        if( ( Couplers[1].Connected != nullptr )
-                         && ( true == TestFlag( Couplers[ 1 ].CouplingFlag, coupling::permanent ) ) ) {
-                            // the first unit isn't allowed to start its compressor until second unit can start its own as well
-                            CompressorFlag &= ( Couplers[ 1 ].Connected->CompressorGovernorLock == false );
-                        }
-                        if( ( Couplers[ 0 ].Connected != nullptr )
-                         && ( true == TestFlag( Couplers[ 0 ].CouplingFlag, coupling::permanent ) ) ) {
-                            // the second unit isn't allowed to start its compressor until first unit can start its own as well
-                            CompressorFlag &= ( Couplers[ 0 ].Connected->CompressorGovernorLock == false );
-                        }
-                    }
-
-                    if( CompressorFlag ) {
-                        // jeśli została załączona
-                        LastSwitchingTime = 0; // to trzeba ograniczyć ponowne włączenie
-                    }
-                }
-            }
-
-            if( CompressorFlag ) {
-                if( ( EngineType == DieselElectric ) && ( CompressorPower > 0 ) ) {
-                    CompressedVolume +=
-                        dt * CompressorSpeed
-                        * ( 2.0 * MaxCompressor - Compressor ) / MaxCompressor
-                        * ( DElist[ MainCtrlPos ].RPM / DElist[ MainCtrlPosNo ].RPM );
-                }
-                else if( ( EngineType == DieselEngine ) && ( CompressorPower == 0 ) ) {
-                    // experimental: compressor coupled with diesel engine, output scaled by current engine rotational speed
-                    CompressedVolume +=
-                        dt * CompressorSpeed
-                        * ( 2.0 * MaxCompressor - Compressor ) / MaxCompressor
-                        * ( std::abs( enrot ) / nmax );
+                else if( ( CompressorPower == 4 ) && ( Couplers[ 0 ].Connected != NULL ) ) {
+                    // tymczasowo tylko obciążenie sprężarki, tak z 5A na sprężarkę
+                    Couplers[ 0 ].Connected->TotalCurrent += 0.0015 * Couplers[ 0 ].Connected->Voltage;
                 }
                 else {
-                    CompressedVolume +=
-                        dt * CompressorSpeed * ( 2.0 * MaxCompressor - Compressor ) / MaxCompressor;
-                    if( ( CompressorPower == 5 ) && ( Couplers[ 1 ].Connected != NULL ) )
-                        Couplers[ 1 ].Connected->TotalCurrent +=
-                        0.0015 * Couplers[ 1 ].Connected->Voltage; // tymczasowo tylko obciążenie
-                                                                 // sprężarki, tak z 5A na
-                                                                 // sprężarkę
-                    else if( ( CompressorPower == 4 ) && ( Couplers[ 0 ].Connected != NULL ) )
-                        Couplers[ 0 ].Connected->TotalCurrent +=
-                        0.0015 * Couplers[ 0 ].Connected->Voltage; // tymczasowo tylko obciążenie
-                                                                 // sprężarki, tak z 5A na
-                                                                 // sprężarkę
-                    else
-                        TotalCurrent += 0.0015 *
-                        Voltage; // tymczasowo tylko obciążenie sprężarki, tak z 5A na sprężarkę
+                    // tymczasowo tylko obciążenie sprężarki, tak z 5A na sprężarkę
+                    TotalCurrent += 0.0015 * Voltage;
                 }
             }
         }
@@ -4076,7 +4204,7 @@ double TMoverParameters::CouplerForce(int CouplerN, double dt)
         // 090503: dzwieki pracy sprzegu
         SetFlag(
             Couplers[ CouplerN ].sounds,
-            ( absdV > 0.1 ?
+            ( absdV > 0.035 ?
                 ( sound::couplerstretch | sound::loud ) :
                   sound::couplerstretch ) );
     }
@@ -4179,8 +4307,9 @@ double TMoverParameters::TractionForce(double dt)
     // youBy
     switch( EngineType ) {
         case DieselElectric: {
-            if( true == ConverterFlag ) {
-                // NOTE: converter is currently a stand-in for a fuel pump
+            if( ( true == Mains )
+             && ( true == FuelPump.is_active ) ) {
+
                 tmp = DElist[ MainCtrlPos ].RPM / 60.0;
 
                 if( ( true == Heating )
@@ -4447,7 +4576,8 @@ double TMoverParameters::TractionForce(double dt)
 
                 PosRatio = currentgenpower / DElist[MainCtrlPosNo].GenPower;
                 // stosunek mocy teraz do mocy max
-                if( ( MainCtrlPos > 0 ) && ( ConverterFlag ) ) {
+                // NOTE: Mains in this context is working diesel engine
+                if( ( true == Mains ) && ( MainCtrlPos > 0 ) ) {
 
                     if( tmpV < ( Vhyp * power / DElist[ MainCtrlPosNo ].GenPower ) ) {
                         // czy na czesci prostej, czy na hiperboli
@@ -5695,32 +5825,75 @@ bool TMoverParameters::dizel_AutoGearCheck(void)
     return OK;
 }
 
+// performs diesel engine startup procedure; potentially clears startup switch; returns: true if the engine can be started, false otherwise
+bool TMoverParameters::dizel_StartupCheck() {
+
+    auto engineisready { true }; // make inital optimistic presumption, then watch the reality crush it
+
+    // test the fuel pump
+    if( false == FuelPump.is_active ) {
+        engineisready = false;
+        if( FuelPump.start_type == start::manual ) {
+            // with manual pump control startup procedure is done only once per starter switch press
+            dizel_startup = false;
+        }
+    }
+    // test the oil pump
+    if( ( false == OilPump.is_active )
+     || ( OilPump.pressure_present < OilPump.pressure_minimum ) ) {
+        engineisready = false;
+        if( OilPump.start_type == start::manual ) {
+            // with manual pump control startup procedure is done only once per starter switch press
+            dizel_startup = false;
+        }
+    }
+
+    return engineisready;
+}
+
 // *************************************************************************************************
 // Q: 20160715
 // Aktualizacja stanu silnika
 // *************************************************************************************************
-bool TMoverParameters::dizel_Update(double dt)
-{
-    double const fillspeed { 2 };
-    bool DU { false };
+bool TMoverParameters::dizel_Update(double dt) {
 
-    // dizel_Update:=false;
-    if( ( true == dizel_enginestart )
+    OilPumpCheck( dt );
+    FuelPumpCheck( dt );
+    if( ( true == dizel_startup )
+     && ( true == dizel_StartupCheck() ) ) {
+        dizel_ignition = true;
+    }
+
+    if( ( true == dizel_ignition )
      && ( LastSwitchingTime >= InitialCtrlDelay ) ) {
-        dizel_enginestart = false;
-        LastSwitchingTime = 0;
 
+        dizel_startup = false;
+        dizel_ignition = false;
+        // TODO: split engine and main circuit state indicator in two separate flags
+        Mains = true;
+        LastSwitchingTime = 0;
         enrot = std::max(
             enrot,
             0.35 * ( // TODO: dac zaleznie od temperatury i baterii
                 EngineType == DieselEngine ?
                     dizel_nmin :
                     DElist[ 0 ].RPM / 60.0 ) );
+
     }
+
+    if( ( true == Mains )
+     && ( false == FuelPump.is_active ) ) {
+        // knock out the engine if the fuel pump isn't feeding it
+        // TBD, TODO: grace period before the engine is starved for fuel and knocked out
+        MainSwitch( false );
+    }
+
+    bool DU { false };
 
     if( EngineType == DieselEngine ) {
         dizel_EngageChange( dt );
         DU = dizel_AutoGearCheck();
+        double const fillspeed { 2 };
         dizel_fill = dizel_fill + fillspeed * dt * ( dizel_fillcheck( MainCtrlPos ) - dizel_fill );
     }
 
@@ -5733,19 +5906,26 @@ bool TMoverParameters::dizel_Update(double dt)
 // *************************************************************************************************
 double TMoverParameters::dizel_fillcheck(int mcp)
 { 
-    double realfill, nreg;
+    auto realfill { 0.0 };
 
-    realfill = 0;
-    nreg = 0;
-    if (Mains && (MainCtrlPosNo > 0))
-    {
-		if (dizel_enginestart &&
-			(LastSwitchingTime >= 0.9 * InitialCtrlDelay)) // wzbogacenie przy rozruchu
-			realfill = 1;
-        else
-            realfill = RList[mcp].R; // napelnienie zalezne od MainCtrlPos
+    if( ( true == Mains )
+     && ( MainCtrlPosNo > 0 )
+     && ( true == FuelPump.is_active ) ) {
+
+        if( ( true == dizel_ignition )
+         && ( LastSwitchingTime >= 0.9 * InitialCtrlDelay ) ) {
+            // wzbogacenie przy rozruchu
+            // NOTE: ignition flag is reset before this code is executed
+            // TODO: sort this out
+            realfill = 1;
+        }
+        else {
+            // napelnienie zalezne od MainCtrlPos
+            realfill = RList[ mcp ].R;
+        }
         if (dizel_nmax_cutoff > 0)
         {
+            auto nreg { 0.0 };
             switch (RList[MainCtrlPos].Mn)
             {
             case 0:
@@ -5760,13 +5940,8 @@ double TMoverParameters::dizel_fillcheck(int mcp)
 				break;
             default:
                 realfill = 0; // sluczaj
+                break;
             }
-            /*if (enrot > nreg)
-                realfill = realfill * (3.9 - 3.0 * abs(enrot) / nreg);
-            if (enrot > dizel_nmax_cutoff)
-                realfill = realfill * (9.8 - 9.0 * abs(enrot) / dizel_nmax_cutoff);
-            if (enrot < dizel_nmin)
-                realfill = realfill * (1.0 + (dizel_nmin - abs(enrot)) / dizel_nmin);*/	
 			if (enrot > nreg) //nad predkoscia regulatora zeruj dawke
 				realfill = 0; 
 			if (enrot < nreg) //pod predkoscia regulatora dawka zadana
@@ -5775,11 +5950,8 @@ double TMoverParameters::dizel_fillcheck(int mcp)
 				realfill = 1;
         }
     }
-    if (realfill < 0)
-        realfill = 0;
-    if (realfill > 1)
-        realfill = 1;
-    return realfill;
+
+    return clamp( realfill, 0.0, 1.0 );
 }
 
 // *************************************************************************************************
@@ -5805,11 +5977,11 @@ double TMoverParameters::dizel_Momentum(double dizel_fill, double n, double dt)
         Moment = -dizel_Mstand;
     }
     if( ( enrot < dizel_nmin / 10.0 )
-     && ( eAngle < PI / 2.0 ) ) {
+     && ( eAngle < M_PI_2 ) ) {
         // wstrzymywanie przy malych obrotach
         Moment -= dizel_Mstand;
     }
-	if (true == dizel_enginestart)
+	if (true == dizel_ignition)
 		Moment += dizel_Mstand / (0.3 + std::max(0.0, enrot/dizel_nmin)); //rozrusznik
 
 	dizel_Torque = Moment;
@@ -5920,7 +6092,7 @@ double TMoverParameters::dizel_Momentum(double dizel_fill, double n, double dt)
 	}
 
 
-	if ((enrot <= 0) && (!dizel_enginestart))
+	if ((enrot <= 0) && (!dizel_ignition))
 	{
 		Mains = false;
 		enrot = 0;
@@ -6016,10 +6188,20 @@ bool TMoverParameters::DoorLeft(bool State, int const Notify ) {
     bool result { false };
 
     if( ( Battery == true )
-     && ( DoorBlockedFlag() == false ) ) {
+     && ( ( State == false ) // closing door works always, but if the lock is engaged they can't be opened
+       || ( DoorBlockedFlag() == false ) ) ) {
 
         DoorLeftOpened = State;
         result = true;
+
+        if( DoorCloseCtrl == control::autonomous ) {
+            // activate or disable the door timer depending on whether door were open or closed
+            // NOTE: this it a local-only operation but shouldn't be an issue as automatic door are operated locally anyway
+            DoorLeftOpenTimer = (
+                State == true ?
+                    DoorStayOpen :
+                    -1.0 );
+        }
     }
     if( Notify != range::local ) {
 
@@ -6056,10 +6238,20 @@ bool TMoverParameters::DoorRight(bool State, int const Notify ) {
     bool result { false };
 
     if( ( Battery == true )
-     && ( DoorBlockedFlag() == false ) ) {
+     && ( ( State == false )
+       || ( DoorBlockedFlag() == false ) ) ) {
 
         DoorRightOpened = State;
         result = true;
+
+        if( DoorCloseCtrl == control::autonomous ) {
+            // activate or disable the door timer depending on whether door were open or closed
+            // NOTE: this it a local-only operation but shouldn't be an issue as automatic door are operated locally anyway
+            DoorRightOpenTimer = (
+                State == true ?
+                    DoorStayOpen :
+                    -1.0 );
+        }
     }
     if( Notify != range::local ) {
 
@@ -6103,6 +6295,45 @@ TMoverParameters::signal_departure( bool const State, int const Notify ) {
     }
 
     return true;
+}
+
+// automatic door controller update
+void
+TMoverParameters::update_autonomous_doors( double const Deltatime ) {
+
+    if( ( DoorCloseCtrl != control::autonomous )
+     || ( ( false == DoorLeftOpened )
+       && ( false == DoorRightOpened ) ) ) {
+        // nothing to do
+        return;
+    }
+
+    if( DoorStayOpen > 0.0 ) {
+        // update door timers if the door close after defined time
+        if( DoorLeftOpenTimer  >= 0.0 ) { DoorLeftOpenTimer  -= Deltatime; }
+        if( DoorRightOpenTimer >= 0.0 ) { DoorRightOpenTimer -= Deltatime; }
+    }
+    if( ( LoadStatus & ( 2 | 1 ) ) != 0 ) {
+        // if there's load exchange in progress, reset the timer(s) for already open doors
+        if( true == DoorLeftOpened )  { DoorLeftOpenTimer  = DoorStayOpen; }
+        if( true == DoorRightOpened ) { DoorRightOpenTimer = DoorStayOpen; }
+    }
+    // the door are closed if their timer goes below 0, or if the vehicle is moving at > 5 km/h
+    // NOTE: timer value of 0 is 'special' as it means the door will stay open until vehicle is moving
+    if( true == DoorLeftOpened ) {
+        if( ( DoorLeftOpenTimer < 0.0 )
+         || ( Vel > 5.0 ) ) {
+            // close the door and set the timer to expired state (closing may happen sooner if vehicle starts moving)
+            DoorLeft( false, range::local );
+        }
+    }
+    if( true == DoorRightOpened ) {
+        if( ( DoorRightOpenTimer < 0.0 )
+         || ( Vel > 5.0 ) ) {
+            // close the door and set the timer to expired state (closing may happen sooner if vehicle starts moving)
+            DoorRight( false, range::local );
+        }
+    }
 }
 
 // *************************************************************************************************
@@ -7183,11 +7414,12 @@ void TMoverParameters::LoadFIZ_Brake( std::string const &line ) {
     extract_value( CompressorSpeed, "CompressorSpeed", line, "" );
     {
         std::map<std::string, int> compressorpowers{
+            { "Main", 0 },
+            // 1: default, powered by converter, with manual state control
             { "Converter", 2 },
-            { "Engine", 3 },
+            { "Engine", 3 }, // equivalent of 0, TODO: separate 'main' and 'engine' in the code
             { "Coupler1", 4 },//włączana w silnikowym EZT z przodu
-            { "Coupler2", 5 },//włączana w silnikowym EZT z tyłu
-            { "Main", 0 }
+            { "Coupler2", 5 } //włączana w silnikowym EZT z tyłu
         };
         auto lookup = compressorpowers.find( extract_value( "CompressorPower", line ) );
         CompressorPower =
@@ -7505,7 +7737,7 @@ void TMoverParameters::LoadFIZ_Cntrl( std::string const &line ) {
 
     // converter
     {
-        std::map<std::string, start> starts{
+        std::map<std::string, start> starts {
             { "Manual", start::manual },
             { "Automatic", start::automatic }
         };
@@ -7516,6 +7748,33 @@ void TMoverParameters::LoadFIZ_Cntrl( std::string const &line ) {
                 start::manual;
     }
     extract_value( ConverterStartDelay, "ConverterStartDelay", line, "" );
+
+    // fuel pump
+    {
+        std::map<std::string, start> starts {
+            { "Manual", start::manual },
+            { "Automatic", start::automatic }
+        };
+        auto lookup = starts.find( extract_value( "FuelStart", line ) );
+        FuelPump.start_type =
+            lookup != starts.end() ?
+                lookup->second :
+                start::manual;
+    }
+
+    // oil pump
+    {
+        std::map<std::string, start> starts {
+            { "Manual", start::manual },
+            { "Automatic", start::automatic },
+            { "Mixed", start::manualwithautofallback }
+        };
+        auto lookup = starts.find( extract_value( "OilStart", line ) );
+        OilPump.start_type =
+            lookup != starts.end() ?
+                lookup->second :
+                start::manual;
+    }
 }
 
 void TMoverParameters::LoadFIZ_Light( std::string const &line ) {
@@ -7669,6 +7928,7 @@ void TMoverParameters::LoadFIZ_Engine( std::string const &Input ) {
 					extract_value(hydro_R_MinVel, "R_MinVel", Input, "");
 				}
 			}
+            extract_value( OilPump.pressure_minimum, "MinOilPressure", Input, "" );
             break;
         }
         case DieselElectric: { //youBy
@@ -7689,6 +7949,7 @@ void TMoverParameters::LoadFIZ_Engine( std::string const &Input ) {
                 ImaxHi = 2;
                 ImaxLo = 1;
             }
+            extract_value( OilPump.pressure_minimum, "OilMinPressure", Input, "" );
             break;
         }
         case ElectricInductionMotor: {
@@ -7967,6 +8228,13 @@ bool TMoverParameters::CheckLocomotiveParameters(bool ReadyFlag, int Dir)
 	AutoRelayFlag = (AutoRelayType == 1);
 
 	Sand = SandCapacity;
+
+    // NOTE: for diesel-powered vehicles we automatically convert legacy "main" power source to more accurate "engine"
+    if( ( CompressorPower == 0 )
+     && ( ( EngineType == DieselEngine )
+       || ( EngineType == DieselElectric ) ) ) {
+        CompressorPower = 3;
+    }
 
 	// WriteLog("aa = " + AxleArangement + " " + std::string( Pos("o", AxleArangement)) );
 
@@ -8403,16 +8671,35 @@ bool TMoverParameters::RunCommand( std::string Command, double CValue1, double C
 		OK = BrakeReleaser(Round(CValue1)); // samo się przesyła dalej
 											// OK:=SendCtrlToNext(command,CValue1,CValue2); //to robiło kaskadę 2^n
 	}
+    else if (Command == "FuelPumpSwitch") {
+        if( FuelPump.start_type == start::manual ) {
+            // automatic fuel pump ignores 'manual' state commands
+            FuelPump.is_enabled = ( CValue1 == 1 );
+        }
+        OK = SendCtrlToNext( Command, CValue1, CValue2, Couplertype );
+	}
+    else if (Command == "OilPumpSwitch") {
+        if( OilPump.start_type == start::manual ) {
+            // automatic pump ignores 'manual' state commands
+            OilPump.is_enabled = ( CValue1 == 1 );
+        }
+        OK = SendCtrlToNext( Command, CValue1, CValue2, Couplertype );
+	}
 	else if (Command == "MainSwitch")
 	{
-		if (CValue1 == 1)
-		{
-			Mains = true;
-			if ((EngineType == DieselEngine) && Mains)
-				dizel_enginestart = true;
+		if (CValue1 == 1) {
+
+            if( ( EngineType == DieselEngine )
+             || ( EngineType == DieselElectric ) ) {
+                dizel_startup = true;
+            }
+            else {
+                Mains = true;
+            }
 		}
-		else
-			Mains = false;
+        else {
+            Mains = false;
+        }
         OK = SendCtrlToNext( Command, CValue1, CValue2, Couplertype );
 	}
 	else if (Command == "Direction")
@@ -8503,17 +8790,33 @@ bool TMoverParameters::RunCommand( std::string Command, double CValue1, double C
             // ignore remote command if the door is only operated locally
             if( CValue2 > 0 ) {
                 // normalne ustawienie pojazdu
-                if( ( CValue1 == 1 ) || ( CValue1 == 3 ) )
-                    DoorLeftOpened = true;
-                if( ( CValue1 == 2 ) || ( CValue1 == 3 ) )
-                    DoorRightOpened = true;
+                if( ( CValue1 == 1 ) || ( CValue1 == 3 ) ) {
+                    DoorLeftOpened = (
+                        ( ( true == Battery ) && ( false == DoorBlockedFlag() ) ) ?
+                            true :
+                            DoorLeftOpened );
+                }
+                if( ( CValue1 == 2 ) || ( CValue1 == 3 ) ) {
+                    DoorRightOpened = (
+                        ( ( true == Battery ) && ( false == DoorBlockedFlag() ) ) ?
+                            true :
+                            DoorRightOpened );
+                }
             }
             else {
                 // odwrotne ustawienie pojazdu
-                if( ( CValue1 == 2 ) || ( CValue1 == 3 ) )
-                    DoorLeftOpened = true;
-                if( ( CValue1 == 1 ) || ( CValue1 == 3 ) )
-                    DoorRightOpened = true;
+                if( ( CValue1 == 2 ) || ( CValue1 == 3 ) ) {
+                    DoorLeftOpened = (
+                        ( ( true == Battery ) && ( false == DoorBlockedFlag() ) ) ?
+                            true :
+                            DoorLeftOpened );
+                }
+                if( ( CValue1 == 1 ) || ( CValue1 == 3 ) ) {
+                    DoorRightOpened = (
+                        ( ( true == Battery ) && ( false == DoorBlockedFlag() ) ) ?
+                            true :
+                            DoorRightOpened );
+                }
             }
         }
         OK = SendCtrlToNext( Command, CValue1, CValue2, Couplertype );
@@ -8526,17 +8829,33 @@ bool TMoverParameters::RunCommand( std::string Command, double CValue1, double C
             // ignore remote command if the door is only operated locally
             if( CValue2 > 0 ) {
                 // normalne ustawienie pojazdu
-                if( ( CValue1 == 1 ) || ( CValue1 == 3 ) )
-                    DoorLeftOpened = false;
-                if( ( CValue1 == 2 ) || ( CValue1 == 3 ) )
-                    DoorRightOpened = false;
+                if( ( CValue1 == 1 ) || ( CValue1 == 3 ) ) {
+                    DoorLeftOpened = (
+                        true == Battery ?
+                            false :
+                            DoorLeftOpened );
+                }
+                if( ( CValue1 == 2 ) || ( CValue1 == 3 ) ) {
+                    DoorRightOpened = (
+                        true == Battery ?
+                            false :
+                            DoorRightOpened );
+                }
             }
             else {
                 // odwrotne ustawienie pojazdu
-                if( ( CValue1 == 2 ) || ( CValue1 == 3 ) )
-                    DoorLeftOpened = false;
-                if( ( CValue1 == 1 ) || ( CValue1 == 3 ) )
-                    DoorRightOpened = false;
+                if( ( CValue1 == 2 ) || ( CValue1 == 3 ) ) {
+                    DoorLeftOpened = (
+                        true == Battery ?
+                            false :
+                            DoorLeftOpened );
+                }
+                if( ( CValue1 == 1 ) || ( CValue1 == 3 ) ) {
+                    DoorRightOpened = (
+                        true == Battery ?
+                            false :
+                            DoorRightOpened );
+                }
             }
         }
         OK = SendCtrlToNext( Command, CValue1, CValue2, Couplertype );

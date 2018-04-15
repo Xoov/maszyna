@@ -275,7 +275,9 @@ private:
         sound_source dsbCouplerAttach { sound_placement::external }; // moved from cab
         sound_source dsbCouplerDetach { sound_placement::external }; // moved from cab
         sound_source dsbCouplerStretch { sound_placement::external }; // moved from cab
+        sound_source dsbCouplerStretch_loud { sound_placement::external };
         sound_source dsbBufferClamp { sound_placement::external }; // moved from cab
+        sound_source dsbBufferClamp_loud { sound_placement::external };
     };
 
     struct pantograph_sounds {
@@ -312,12 +314,14 @@ private:
         sound_source rsWentylator { sound_placement::engine }; // McZapkie-030302
         sound_source engine { sound_placement::engine }; // generally diesel engine
         sound_source engine_ignition { sound_placement::engine }; // moved from cab
+        bool engine_state_last { false }; // helper, cached previous state of the engine
         double engine_volume { 0.0 }; // MC: pomocnicze zeby gladziej silnik buczal
         sound_source engine_revving { sound_placement::engine }; // youBy
         float engine_revs_last { -1.f }; // helper, cached rpm of the engine
         float engine_revs_change { 0.f }; // recent change in engine revolutions
         sound_source engine_turbo { sound_placement::engine };
         double engine_turbo_pitch { 1.0 };
+        sound_source oil_pump { sound_placement::engine };
         sound_source transmission { sound_placement::engine };
         sound_source rsEngageSlippery { sound_placement::engine }; // moved from cab
 
@@ -516,7 +520,7 @@ private:
         return mMatrix.readArray(); };
     inline double * Matrix() {
         return mMatrix.getArray(); };
-    inline double GetVelocity() {
+    inline double GetVelocity() const {
         return MoverParameters->Vel; };
     inline double GetLength() const {
         return MoverParameters->Dim.L; };
@@ -559,7 +563,7 @@ private:
     float GetEPP(); // wyliczanie sredniego cisnienia w PG
     int DirectionSet(int d); // ustawienie kierunku w składzie
     // odczyt kierunku w składzie
-    int DirectionGet() {
+    int DirectionGet() const {
         return iDirection + iDirection - 1; };
     int DettachStatus(int dir);
     int Dettach(int dir);

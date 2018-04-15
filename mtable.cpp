@@ -10,6 +10,7 @@ http://mozilla.org/MPL/2.0/.
 #include "stdafx.h"
 #include "mtable.h"
 
+#include "globals.h"
 #include "world.h"
 #include "utilities.h"
 
@@ -229,8 +230,6 @@ bool TTrainParameters::LoadTTfile(std::string scnpath, int iPlus, double vmax)
     std::ifstream fin;
     bool EndTable;
     double vActual;
-    int i;
-    int time; // do zwiększania czasu
 
     int ConversionError = 0;
     EndTable = false;
@@ -521,22 +520,24 @@ bool TTrainParameters::LoadTTfile(std::string scnpath, int iPlus, double vmax)
         // NextStationName:=TimeTable[1].StationName;
         /*  TTVmax:=TimeTable[1].vmax;  */
     }
-    if ((iPlus != 0)) // jeżeli jest przesunięcie rozkładu
+    auto const timeoffset { static_cast<int>( Global.ScenarioTimeOffset * 60 ) + iPlus };
+    if( timeoffset != 0 ) // jeżeli jest przesunięcie rozkładu
     {
         long i_end = StationCount + 1;
-        for (i = 1; i < i_end; ++i) // bez with, bo ciężko się przenosi na C++
+        int adjustedtime; // do zwiększania czasu
+        for (auto i = 1; i < i_end; ++i) // bez with, bo ciężko się przenosi na C++
         {
             if ((TimeTable[i].Ah >= 0))
             {
-                time = iPlus + TimeTable[i].Ah * 60 + TimeTable[i].Am; // nowe minuty
-                TimeTable[i].Am = time % 60;
-                TimeTable[i].Ah = (time /*div*/ / 60) % 60;
+                adjustedtime = clamp_circular( TimeTable[i].Ah * 60 + TimeTable[i].Am + timeoffset, 24 * 60 ); // nowe minuty
+                TimeTable[i].Am = adjustedtime % 60;
+                TimeTable[i].Ah = (adjustedtime / 60) % 24;
             }
             if ((TimeTable[i].Dh >= 0))
             {
-                time = iPlus + TimeTable[i].Dh * 60 + TimeTable[i].Dm; // nowe minuty
-                TimeTable[i].Dm = time % 60;
-                TimeTable[i].Dh = (time /*div*/ / 60) % 60;
+                adjustedtime = clamp_circular( TimeTable[i].Dh * 60 + TimeTable[i].Dm + timeoffset, 24 * 60 ); // nowe minuty
+                TimeTable[i].Dm = adjustedtime % 60;
+                TimeTable[i].Dh = (adjustedtime / 60) % 24;
             }
         }
     }

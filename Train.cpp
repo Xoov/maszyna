@@ -222,6 +222,12 @@ TTrain::commandhandler_map const TTrain::m_commandhandlers = {
     { user_command::linebreakertoggle, &TTrain::OnCommand_linebreakertoggle },
     { user_command::linebreakeropen, &TTrain::OnCommand_linebreakeropen },
     { user_command::linebreakerclose, &TTrain::OnCommand_linebreakerclose },
+    { user_command::fuelpumptoggle, &TTrain::OnCommand_fuelpumptoggle },
+    { user_command::fuelpumpenable, &TTrain::OnCommand_fuelpumpenable },
+    { user_command::fuelpumpdisable, &TTrain::OnCommand_fuelpumpdisable },
+    { user_command::oilpumptoggle, &TTrain::OnCommand_oilpumptoggle },
+    { user_command::oilpumpenable, &TTrain::OnCommand_oilpumpenable },
+    { user_command::oilpumpdisable, &TTrain::OnCommand_oilpumpdisable },
     { user_command::convertertoggle, &TTrain::OnCommand_convertertoggle },
     { user_command::converterenable, &TTrain::OnCommand_converterenable },
     { user_command::converterdisable, &TTrain::OnCommand_converterdisable },
@@ -547,6 +553,7 @@ TTrain::get_state() const {
     return {
         btLampkaSHP.GetValue(),
         btLampkaCzuwaka.GetValue(),
+        btLampkaRadioStop.GetValue(),
         btLampkaOpory.GetValue(),
         btLampkaWylSzybki.GetValue(),
         btLampkaNadmSil.GetValue(),
@@ -1977,21 +1984,97 @@ void TTrain::OnCommand_linebreakerclose( TTrain *Train, command_data const &Comm
 
         if( Train->m_linebreakerstate == 1 ) { return; } // already in the desired state
 
-        if( Train->m_linebreakerstate > 1 ) {
+        if( Train->m_linebreakerstate == 2 ) {
             // we don't need to start the diesel twice, but the other types (with impulse switch setup) still need to be launched
             if( ( Train->mvControlled->EngineType != DieselEngine )
              && ( Train->mvControlled->EngineType != DieselElectric ) ) {
-                if( Train->mvControlled->MainSwitch( true ) ) {
-                    // side-effects
-                    Train->mvControlled->ConverterSwitch( ( Train->ggConverterButton.GetValue() > 0.5 ) || ( Train->mvControlled->ConverterStart == start::automatic ) );
-                    Train->mvControlled->CompressorSwitch( Train->ggCompressorButton.GetValue() > 0.5 );
-                    // finalize state change of the line breaker
-                    Train->m_linebreakerstate = 1;
-                }
+                // try to finalize state change of the line breaker, set the state based on the outcome
+                Train->m_linebreakerstate = (
+                    Train->mvControlled->MainSwitch( true ) ?
+                        1 :
+                        0 );
             }
         }
         // on button release reset the closing timer
         Train->fMainRelayTimer = 0.0f;
+    }
+}
+
+void TTrain::OnCommand_fuelpumptoggle( TTrain *Train, command_data const &Command ) {
+
+    if( Command.action == GLFW_PRESS ) {
+        // only reacting to press, so the switch doesn't flip back and forth if key is held down
+        if( false == Train->mvControlled->FuelPump.is_enabled ) {
+            // turn on
+            OnCommand_fuelpumpenable( Train, Command );
+        }
+        else {
+            //turn off
+            OnCommand_fuelpumpdisable( Train, Command );
+        }
+    }
+}
+
+void TTrain::OnCommand_fuelpumpenable( TTrain *Train, command_data const &Command ) {
+
+    if( Command.action == GLFW_PRESS ) {
+        // visual feedback
+        Train->ggFuelPumpButton.UpdateValue( 1.0, Train->dsbSwitch );
+
+        if( true == Train->mvControlled->FuelPump.is_enabled ) { return; } // already enabled
+
+        Train->mvControlled->FuelPumpSwitch( true );
+    }
+}
+
+void TTrain::OnCommand_fuelpumpdisable( TTrain *Train, command_data const &Command ) {
+
+    if( Command.action == GLFW_PRESS ) {
+        // visual feedback
+        Train->ggFuelPumpButton.UpdateValue( 0.0, Train->dsbSwitch );
+
+        if( false == Train->mvControlled->FuelPump.is_enabled ) { return; } // already disabled
+
+        Train->mvControlled->FuelPumpSwitch( false );
+    }
+}
+
+void TTrain::OnCommand_oilpumptoggle( TTrain *Train, command_data const &Command ) {
+
+    if( Command.action == GLFW_PRESS ) {
+        // only reacting to press, so the switch doesn't flip back and forth if key is held down
+        if( false == Train->mvControlled->OilPump.is_enabled ) {
+            // turn on
+            OnCommand_oilpumpenable( Train, Command );
+        }
+        else {
+            //turn off
+            OnCommand_oilpumpdisable( Train, Command );
+        }
+    }
+}
+
+void TTrain::OnCommand_oilpumpenable( TTrain *Train, command_data const &Command ) {
+
+    if( Command.action == GLFW_PRESS ) {
+        // visual feedback
+        Train->ggOilPumpButton.UpdateValue( 1.0, Train->dsbSwitch );
+
+        if( true == Train->mvControlled->OilPump.is_enabled ) { return; } // already enabled
+
+        Train->mvControlled->OilPumpSwitch( true );
+    }
+}
+
+void TTrain::OnCommand_oilpumpdisable( TTrain *Train, command_data const &Command ) {
+
+    if( Command.action == GLFW_PRESS ) {
+        // visual feedback
+        Train->ggOilPumpButton.UpdateValue( 0.0, Train->dsbSwitch );
+
+        if( false == Train->mvControlled->OilPump.is_enabled ) { return; } // already disabled
+
+        Train->mvControlled->OilPumpSwitch( false );
     }
 }
 
@@ -3720,7 +3803,7 @@ void TTrain::UpdateMechPosition(double dt)
             if( std::abs( mvOccupied->enrot ) > 0.0 ) {
                 // engine vibration
                 shakevector.x +=
-                    ( std::cos( mvOccupied->eAngle * 4.0 ) * dt * EngineShake.scale )
+                    ( std::sin( mvOccupied->eAngle * 4.0 ) * dt * EngineShake.scale )
                     // fade in with rpm above threshold
                     * clamp(
                         ( mvOccupied->enrot - EngineShake.fadein_offset ) * EngineShake.fadein_factor,
@@ -3733,6 +3816,20 @@ void TTrain::UpdateMechPosition(double dt)
                             0.0, 1.0 ) );
             }
         }
+
+        if( ( HuntingShake.fadein_begin > 0.f )
+         && ( true == mvOccupied->TruckHunting ) ) {
+            // hunting oscillation
+            HuntingAngle = clamp_circular( HuntingAngle + 4.0 * HuntingShake.frequency * dt * mvOccupied->Vel, 360.0 );
+            shakevector.x +=
+                ( std::sin( glm::radians( HuntingAngle ) ) * dt * HuntingShake.scale )
+                * interpolate(
+                    0.0, 1.0,
+                    clamp(
+                        ( mvOccupied->Vel - HuntingShake.fadein_begin ) / ( HuntingShake.fadein_end - HuntingShake.fadein_begin ),
+                        0.0, 1.0 ) );
+        }
+
         if( iVel > 0.5 ) {
             // acceleration-driven base shake
             shakevector += Math3D::vector3(
@@ -3841,12 +3938,6 @@ bool TTrain::Update( double const Deltatime )
         }
     }
     if( m_linebreakerstate == 1 ) {
-        if( ( mvControlled->EngineType == DieselElectric )
-         && ( false == mvControlled->ConverterFlag ) ) {
-            // converter acts as a make-believe fuel pump so if it's off, kill the engine
-            // TODO: implement actual fuel system and move this check to the mover update
-            mvControlled->MainSwitch( false );
-        }
         if( false == mvControlled->Mains ) {
             // crude way to catch cases where the main was knocked out and the user is trying to restart it
             // because the state of the line breaker isn't changed to match, we need to do it here manually
@@ -3883,17 +3974,14 @@ bool TTrain::Update( double const Deltatime )
     }
     if( m_linebreakerstate == 2 ) {
         // for diesels and/or vehicles with toggle switch setup we complete the engine start here
-        // TBD, TODO: arrange a better way to start the diesel engines
         if( ( ggMainOnButton.SubModel == nullptr )
          || ( ( mvControlled->EngineType == DieselEngine )
            || ( mvControlled->EngineType == DieselElectric ) ) ) {
-            if( mvControlled->MainSwitch( true ) ) {
-                // side-effects
-                mvControlled->ConverterSwitch( ( ggConverterButton.GetDesiredValue() > 0.95 ) || ( mvControlled->ConverterStart == start::automatic ) );
-                mvControlled->CompressorSwitch( ggCompressorButton.GetDesiredValue() > 0.95 );
-                // finalize state change of the line breaker
-                m_linebreakerstate = 1;
-            }
+            // try to finalize state change of the line breaker, set the state based on the outcome
+            m_linebreakerstate = (
+                mvControlled->MainSwitch( true ) ?
+                    1 :
+                    0 );
         }
     }
 
@@ -3931,6 +4019,23 @@ bool TTrain::Update( double const Deltatime )
 
     if (DynamicObject->mdKabina)
     { // Ra: TODO: odczyty klawiatury/pulpitu nie powinny być uzależnione od istnienia modelu kabiny
+
+        if( ( DynamicObject->Mechanik != nullptr )
+         && ( false == DynamicObject->Mechanik->AIControllFlag ) // nie blokujemy AI
+         && ( ( mvOccupied->TrainType == dt_ET40 )
+           || ( mvOccupied->TrainType == dt_EP05 ) ) ) {
+            // dla ET40 i EU05 automatyczne cofanie nastawnika - i tak nie będzie to działać dobrze...
+            // TODO: remove direct keyboard check, use deltatime to stabilize speed
+            if( ( glfwGetKey( Global.window, GLFW_KEY_KP_ADD ) != GLFW_TRUE )
+             && ( mvOccupied->MainCtrlPos > mvOccupied->MainCtrlActualPos ) ) {
+                mvOccupied->DecMainCtrl( 1 );
+            }
+            if( ( glfwGetKey( Global.window, GLFW_KEY_KP_SUBTRACT ) != GLFW_TRUE )
+             && ( mvOccupied->MainCtrlPos < mvOccupied->MainCtrlActualPos ) ) {
+                mvOccupied->IncMainCtrl( 1 ); // Ra 15-01: a to nie miało być tylko cofanie?
+            }
+        }
+
         tor = DynamicObject->GetTrack(); // McZapkie-180203
         // McZapkie: predkosc wyswietlana na tachometrze brana jest z obrotow kol
         float maxtacho = 3;
@@ -4293,7 +4398,7 @@ bool TTrain::Update( double const Deltatime )
             }
             if (ggIgnitionKey.SubModel)
             {
-                ggIgnitionKey.UpdateValue(mvControlled->dizel_enginestart);
+                ggIgnitionKey.UpdateValue(mvControlled->dizel_startup);
                 ggIgnitionKey.Update();
             }
         }
@@ -4415,6 +4520,7 @@ bool TTrain::Update( double const Deltatime )
             btLampkaNapNastHam.Turn(mvControlled->ActiveDir != 0); // napiecie na nastawniku hamulcowym
             btLampkaSprezarka.Turn(mvControlled->CompressorFlag); // mutopsitka dziala
             btLampkaSprezarkaOff.Turn( false == mvControlled->CompressorFlag );
+            btLampkaFuelPumpOff.Turn( false == mvControlled->FuelPump.is_active );
             // boczniki
             unsigned char scp; // Ra: dopisałem "unsigned"
             // Ra: w SU45 boczniki wchodzą na MainCtrlPos, a nie na MainCtrlActualPos
@@ -4454,6 +4560,7 @@ bool TTrain::Update( double const Deltatime )
             btLampkaNadmPrzetw.Turn( false );
             btLampkaSprezarka.Turn( false );
             btLampkaSprezarkaOff.Turn( false );
+            btLampkaFuelPumpOff.Turn( false );
             btLampkaBezoporowa.Turn( false );
         }
         if (mvControlled->Signalling == true) {
@@ -4859,6 +4966,9 @@ bool TTrain::Update( double const Deltatime )
         ggCabLightButton.Update();
         ggCabLightDimButton.Update();
         ggBatteryButton.Update();
+
+        ggFuelPumpButton.Update();
+        ggOilPumpButton.Update();
         //------
         pyScreens.update();
     }
@@ -5142,15 +5252,22 @@ TTrain::update_sounds( double const Deltatime ) {
             volume *= 1 + 0.125 * brakeforceratio;
         }
         // scale volume by track quality
-        volume *= ( 20.0 + DynamicObject->MyTrack->iDamageFlag ) / 21;
-        // scale volume with vehicle speed
-        // TBD, TODO: disable the scaling for sounds combined from speed-based samples?
+        // TODO: track quality and/or environment factors as separate subroutine
         volume *=
             interpolate(
-                0.0, 1.0,
+                0.8, 1.2,
                 clamp(
-                    mvOccupied->Vel / 40.0,
+                    DynamicObject->MyTrack->iQualityFlag / 20.0,
                     0.0, 1.0 ) );
+        // for single sample sounds muffle the playback at low speeds
+        if( false == rsRunningNoise.is_combined() ) {
+            volume *=
+                interpolate(
+                    0.0, 1.0,
+                    clamp(
+                        mvOccupied->Vel / 40.0,
+                        0.0, 1.0 ) );
+        }
 
         if( volume > 0.05 ) {
             rsRunningNoise
@@ -5405,6 +5522,17 @@ bool TTrain::LoadMMediaFile(std::string const &asFileName)
                     >> EngineShake.fadein_factor
                     >> EngineShake.fadeout_offset
                     >> EngineShake.fadeout_factor;
+                // offsets values are provided as rpm for convenience
+                EngineShake.fadein_offset /= 60.f;
+                EngineShake.fadeout_offset /= 60.f;
+            }
+            else if( token == "huntingspring:" ) {
+                parser.getTokens( 4, false );
+                parser
+                    >> HuntingShake.scale
+                    >> HuntingShake.frequency
+                    >> HuntingShake.fadein_begin
+                    >> HuntingShake.fadein_end;
             }
 
         } while (token != "");
@@ -5885,6 +6013,9 @@ void TTrain::clear_cab_controls()
     ggMainGearStatus.Clear();
     ggIgnitionKey.Clear();
 
+    ggFuelPumpButton.Clear();
+    ggOilPumpButton.Clear();
+
     btLampkaPrzetw.Clear();
     btLampkaPrzetwB.Clear();
     btLampkaPrzetwBOff.Clear();
@@ -5924,6 +6055,7 @@ void TTrain::clear_cab_controls()
     btLampkaSprezarkaB.Clear();
     btLampkaSprezarkaOff.Clear();
     btLampkaSprezarkaBOff.Clear();
+    btLampkaFuelPumpOff.Clear();
     btLampkaNapNastHam.Clear();
     btLampkaStycznB.Clear();
     btLampkaHamowanie1zes.Clear();
@@ -6046,9 +6178,14 @@ void TTrain::set_cab_controls() {
             1.0 :
             0.0 );
     // motor overload relay threshold / shunt mode
-    if( mvControlled->Imax == mvControlled->ImaxHi ) {
-        ggMaxCurrentCtrl.PutValue( 1.0 );
-    }
+    ggMaxCurrentCtrl.PutValue(
+        ( true == mvControlled->ShuntModeAllow ?
+            ( true == mvControlled->ShuntMode ?
+                1.0 :
+                0.0 ) :
+            ( mvControlled->Imax == mvControlled->ImaxHi ?
+                1.0 :
+                0.0 ) ) );
     // lights
     ggLightsButton.PutValue( mvOccupied->LightsPos - 1 );
 
@@ -6143,6 +6280,16 @@ void TTrain::set_cab_controls() {
         ShowNextCurrent ?
             1.0 :
             0.0 );
+    // fuel pump
+    ggFuelPumpButton.PutValue(
+        mvOccupied->FuelPump.is_enabled ?
+            1.0 :
+            0.0 );
+    // oil pump
+    ggOilPumpButton.PutValue(
+        mvOccupied->OilPump.is_enabled ?
+            1.0 :
+            0.0 );
     
     // we reset all indicators, as they're set during the update pass
     // TODO: when cleaning up break setting indicator state into a separate function, so we can reuse it
@@ -6206,6 +6353,7 @@ bool TTrain::initialize_button(cParser &Parser, std::string const &Label, int co
         { "i-compressorb:", btLampkaSprezarkaB },
         { "i-compressoroff:", btLampkaSprezarkaOff },
         { "i-compressorboff:", btLampkaSprezarkaBOff },
+        { "i-fuelpumpoff:", btLampkaFuelPumpOff },
         { "i-voltbrake:", btLampkaNapNastHam },
         { "i-resistorsb:", btLampkaOporyB },
         { "i-contactorsb:", btLampkaStycznB },
@@ -6306,6 +6454,8 @@ bool TTrain::initialize_gauge(cParser &Parser, std::string const &Label, int con
         { "converterlocal_sw:", ggConverterLocalButton },
         { "converteroff_sw:", ggConverterOffButton },
         { "main_sw:", ggMainButton },
+        { "fuelpump_sw:", ggFuelPumpButton },
+        { "oilpump_sw:", ggOilPumpButton },
         { "radio_sw:", ggRadioButton },
         { "radiochannel_sw:", ggRadioChannelSelector },
         { "radiochannelprev_sw:", ggRadioChannelPrevious },
@@ -6464,6 +6614,12 @@ bool TTrain::initialize_gauge(cParser &Parser, std::string const &Label, int con
         auto &gauge = Cabine[Cabindex].Gauge(-1); // pierwsza wolna gałka
         gauge.Load(Parser, DynamicObject, DynamicObject->mdKabina, nullptr, 0.1);
         gauge.AssignDouble(&mvOccupied->Compressor);
+    }
+    else if( Label == "oilpress:" ) {
+        // oil pressure
+        auto &gauge = Cabine[ Cabindex ].Gauge( -1 ); // pierwsza wolna gałka
+        gauge.Load( Parser, DynamicObject, DynamicObject->mdKabina, nullptr );
+        gauge.AssignFloat( &mvOccupied->OilPump.pressure_present );
     }
     // yB - dla drugiej sekcji
     else if (Label == "hvbcurrent1:")

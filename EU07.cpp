@@ -148,10 +148,13 @@ void mouse_button_callback( GLFWwindow* window, int button, int action, int mods
 
 void key_callback( GLFWwindow *window, int key, int scancode, int action, int mods ) {
 
-    input::Keyboard.key( key, action );
-
     Global.shiftState = ( mods & GLFW_MOD_SHIFT ) ? true : false;
     Global.ctrlState = ( mods & GLFW_MOD_CONTROL ) ? true : false;
+
+    // give the ui first shot at the input processing...
+    if( true == UILayer.on_key( key, action ) ) { return; }
+    // ...if the input is left untouched, pass it on
+    input::Keyboard.key( key, action );
 
     if( ( true == Global.InputMouse )
      && ( ( key == GLFW_KEY_LEFT_ALT )
@@ -436,8 +439,8 @@ int main(int argc, char *argv[])
 #endif
     if( Global.iConvertModels < 0 ) {
         Global.iConvertModels = -Global.iConvertModels;
-        World.CreateE3D( "models\\" ); // rekurencyjne przeglądanie katalogów
-        World.CreateE3D( "dynamic\\", true );
+        World.CreateE3D( szModelPath ); // rekurencyjne przeglądanie katalogów
+        World.CreateE3D( szDynamicPath, true );
     } // po zrobieniu E3D odpalamy normalnie scenerię, by ją zobaczyć
 #ifdef _WIN32
     Console::On(); // włączenie konsoli
