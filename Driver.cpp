@@ -1838,6 +1838,12 @@ void TController::AutoRewident()
 		fAccThreshold = -fBrake_a0[BrakeAccTableSize] - 1 * fBrake_a1[BrakeAccTableSize];
 		fBrakeReaction = 1.00 + fLength*0.005;
 	}
+	for (int i = 1; i <= 8; i *= 2) //ustawianie trybu pracy zadajnika hamulca, wystarczy raz po inicjalizacji AI
+	{
+		if ((mvOccupied->BrakeOpModes & i) > 0) {
+			mvOccupied->BrakeOpModeFlag = i;
+		}
+	}
 }
 
 double TController::ESMVelocity(bool Main)
@@ -2549,7 +2555,13 @@ bool TController::IncBrake()
         }
         case ElectroPneumatic: {
             if( mvOccupied->EngineType == ElectricInductionMotor ) {
-                OK = mvOccupied->IncLocalBrakeLevel( 1 );
+				if (mvOccupied->BrakeHandle == MHZ_EN57) {
+					if (mvOccupied->BrakeCtrlPos < mvOccupied->Handle->GetPos(bh_FB))
+						OK = mvOccupied->BrakeLevelAdd(1.0);
+				}
+				else {
+					OK = mvOccupied->IncLocalBrakeLevel(1);
+				}
             }
             else if( mvOccupied->fBrakeCtrlPos != mvOccupied->Handle->GetPos( bh_EPB ) ) {
                 mvOccupied->BrakeLevelSet( mvOccupied->Handle->GetPos( bh_EPB ) );
@@ -2597,10 +2609,15 @@ bool TController::DecBrake()
             Need_BrakeRelease = true;
         break;
     case ElectroPneumatic:
-        if (mvOccupied->EngineType == ElectricInductionMotor)
-        {
-            OK = mvOccupied->DecLocalBrakeLevel(1);
-        }
+		if (mvOccupied->EngineType == ElectricInductionMotor) {
+			if (mvOccupied->BrakeHandle == MHZ_EN57) {
+				if (mvOccupied->BrakeCtrlPos > mvOccupied->Handle->GetPos(bh_MB))
+					OK = mvOccupied->BrakeLevelAdd(-1.0);
+			}
+			else {
+				OK = mvOccupied->DecLocalBrakeLevel(1);
+			}
+		}
         else if (mvOccupied->fBrakeCtrlPos != mvOccupied->Handle->GetPos(bh_EPR))
         {
             mvOccupied->BrakeLevelSet(mvOccupied->Handle->GetPos(bh_EPR));
