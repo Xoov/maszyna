@@ -299,6 +299,7 @@ class TTrain
     static void OnCommand_departureannounce( TTrain *Train, command_data const &Command );
     static void OnCommand_hornlowactivate( TTrain *Train, command_data const &Command );
     static void OnCommand_hornhighactivate( TTrain *Train, command_data const &Command );
+    static void OnCommand_whistleactivate( TTrain *Train, command_data const &Command );
     static void OnCommand_radiotoggle( TTrain *Train, command_data const &Command );
     static void OnCommand_radiochannelincrease( TTrain *Train, command_data const &Command );
     static void OnCommand_radiochanneldecrease( TTrain *Train, command_data const &Command );
@@ -309,11 +310,11 @@ class TTrain
     static void OnCommand_generictoggle( TTrain *Train, command_data const &Command );
 
 // members
-    TDynamicObject *DynamicObject; // przestawia zmiana pojazdu [F5]
-    TMoverParameters *mvControlled; // człon, w którym sterujemy silnikiem
-    TMoverParameters *mvOccupied; // człon, w którym sterujemy hamulcem
-    TMoverParameters *mvSecond; // drugi człon (ET40, ET41, ET42, ukrotnienia)
-    TMoverParameters *mvThird; // trzeci człon (SN61)
+    TDynamicObject *DynamicObject { nullptr }; // przestawia zmiana pojazdu [F5]
+    TMoverParameters *mvControlled { nullptr }; // człon, w którym sterujemy silnikiem
+    TMoverParameters *mvOccupied { nullptr }; // człon, w którym sterujemy hamulcem
+    TMoverParameters *mvSecond { nullptr }; // drugi człon (ET40, ET41, ET42, ukrotnienia)
+    TMoverParameters *mvThird { nullptr }; // trzeci człon (SN61)
     // helper variable, to prevent immediate switch between closing and opening line breaker circuit
     int m_linebreakerstate { 0 }; // 0: open, 1: closed, 2: freshly closed (and yes this is awful way to go about it)
     static const commandhandler_map m_commandhandlers;
@@ -335,6 +336,9 @@ public: // reszta może by?publiczna
     TGauge ggI2B;
     TGauge ggI3B;
     TGauge ggItotalB;
+
+    TGauge ggOilPressB;
+    TGauge ggWater1TempB;
 
     // McZapkie: definicje regulatorow
     TGauge ggMainCtrl;
@@ -395,6 +399,7 @@ public: // reszta może by?publiczna
     TGauge ggHornButton;
     TGauge ggHornLowButton;
     TGauge ggHornHighButton;
+    TGauge ggWhistleButton;
     TGauge ggNextCurrentButton;
 
     std::array<TGauge, 10> ggUniversals; // NOTE: temporary arrangement until we have dynamically built control table
