@@ -196,6 +196,7 @@ class TTrain
     static void OnCommand_mubrakingindicatortoggle( TTrain *Train, command_data const &Command );
     static void OnCommand_reverserincrease( TTrain *Train, command_data const &Command );
     static void OnCommand_reverserdecrease( TTrain *Train, command_data const &Command );
+    static void OnCommand_reverserforwardhigh( TTrain *Train, command_data const &Command );
     static void OnCommand_reverserforward( TTrain *Train, command_data const &Command );
     static void OnCommand_reverserneutral( TTrain *Train, command_data const &Command );
     static void OnCommand_reverserbackward( TTrain *Train, command_data const &Command );
@@ -592,6 +593,7 @@ public: // reszta może by?publiczna
 
     Math3D::vector3 pMechSittingPosition; // ABu 180404
     Math3D::vector3 MirrorPosition(bool lewe);
+    glm::vec2 pMechViewAngle { 0.0, 0.0 }; // camera pitch and yaw values, preserved while in external view
 
 private:
     double fBlinkTimer;

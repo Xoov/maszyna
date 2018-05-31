@@ -206,6 +206,7 @@ TTrain::commandhandler_map const TTrain::m_commandhandlers = {
     { user_command::mubrakingindicatortoggle, &TTrain::OnCommand_mubrakingindicatortoggle },
     { user_command::reverserincrease, &TTrain::OnCommand_reverserincrease },
     { user_command::reverserdecrease, &TTrain::OnCommand_reverserdecrease },
+    { user_command::reverserforwardhigh, &TTrain::OnCommand_reverserforwardhigh },
     { user_command::reverserforward, &TTrain::OnCommand_reverserforward },
     { user_command::reverserneutral, &TTrain::OnCommand_reverserneutral },
     { user_command::reverserbackward, &TTrain::OnCommand_reverserbackward },
@@ -1464,9 +1465,20 @@ void TTrain::OnCommand_reverserdecrease( TTrain *Train, command_data const &Comm
     }
 }
 
+void TTrain::OnCommand_reverserforwardhigh( TTrain *Train, command_data const &Command ) {
+
+    if( Command.action == GLFW_PRESS ) {
+
+        OnCommand_reverserforward( Train, Command );
+        OnCommand_reverserincrease( Train, Command );
+    }
+}
+
 void TTrain::OnCommand_reverserforward( TTrain *Train, command_data const &Command ) {
 
     if( Command.action == GLFW_PRESS ) {
+        // HACK: try to move the reverser one position back, in case it's set to "high forward"
+        OnCommand_reverserdecrease( Train, Command );
 
         if( Train->mvOccupied->ActiveDir < 1 ) {
 
@@ -5882,6 +5894,10 @@ bool TTrain::InitializeCab(int NewCabNo, std::string const &asFileName)
         sound->offset( nullvector );
         sound->owner( DynamicObject );
     }
+    // reset view angles
+    pMechViewAngle = { 0.0, 0.0 };
+    Global.pCamera->Pitch = pMechViewAngle.x;
+    Global.pCamera->Yaw = pMechViewAngle.y;
 
     pyScreens.reset(this);
     pyScreens.setLookupPath(DynamicObject->asBaseDir);
@@ -5934,41 +5950,59 @@ bool TTrain::InitializeCab(int NewCabNo, std::string const &asFileName)
     {
         // jeśli znaleziony wpis kabiny
         Cabine[cabindex].Load(*parser);
-        // NOTE: the next part is likely to break if sitpos doesn't follow pos
+        // NOTE: the position and angle definitions depend on strict entry order
+        // TODO: refactor into more flexible arrangement
         parser->getTokens();
         *parser >> token;
+        if( token == std::string( "driver" + std::to_string( cabindex ) + "angle:" ) ) {
+            // camera view angle
+            parser->getTokens( 2, false );
+            // angle is specified in degrees but internally stored in radians
+            glm::vec2 viewangle;
+            *parser
+                >> viewangle.y // yaw first, then pitch
+                >> viewangle.x;
+            pMechViewAngle = glm::radians( viewangle );
+            Global.pCamera->Pitch = pMechViewAngle.x;
+            Global.pCamera->Yaw = pMechViewAngle.y;
+
+            parser->getTokens();
+            *parser >> token;
+        }
         if (token == std::string("driver" + std::to_string(cabindex) + "pos:"))
         {
             // pozycja poczatkowa maszynisty
             parser->getTokens(3, false);
-            *parser >> pMechOffset.x >> pMechOffset.y >> pMechOffset.z;
-            pMechSittingPosition.x = pMechOffset.x;
-            pMechSittingPosition.y = pMechOffset.y;
-            pMechSittingPosition.z = pMechOffset.z;
+            *parser
+                >> pMechOffset.x
+                >> pMechOffset.y
+                >> pMechOffset.z;
+            pMechSittingPosition = pMechOffset;
+
+            parser->getTokens();
+            *parser >> token;
         }
         // ABu: pozycja siedzaca mechanika
-        parser->getTokens();
-        *parser >> token;
         if (token == std::string("driver" + std::to_string(cabindex) + "sitpos:"))
         {
             // ABu 180404 pozycja siedzaca maszynisty
             parser->getTokens(3, false);
-            *parser >> pMechSittingPosition.x >> pMechSittingPosition.y >> pMechSittingPosition.z;
-            parse = true;
+            *parser
+                >> pMechSittingPosition.x
+                >> pMechSittingPosition.y
+                >> pMechSittingPosition.z;
+
+            parser->getTokens();
+            *parser >> token;
         }
         // else parse=false;
-        do
-        {
-            // ABu: wstawione warunki, wczesniej tylko to:
-            //   str=Parser->GetNextSymbol().LowerCase();
-            if (parse == true) {
-
+        do {
+            if( parse == true ) {
                 token = "";
                 parser->getTokens();
                 *parser >> token;
             }
-            else
-            {
+            else {
                 parse = true;
             }
             // inicjacja kabiny
