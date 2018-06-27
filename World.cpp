@@ -74,6 +74,45 @@ simulation_time::init() {
     }
 
     m_yearday = year_day( m_time.wDay, m_time.wMonth, m_time.wYear );
+
+    // calculate time zone bias
+    // retrieve relevant time zone info from system registry (or fall back on supplied default)
+    // TODO: select timezone matching defined geographic location and/or country
+    struct registry_time_zone_info {
+        long Bias;
+        long StandardBias;
+        long DaylightBias;
+        SYSTEMTIME StandardDate;
+        SYSTEMTIME DaylightDate;
+    } registrytimezoneinfo = { -60, 0, -60, { 0, 10, 0, 5, 3, 0, 0, 0 }, { 0, 3, 0, 5, 2, 0, 0, 0 } };
+
+#ifdef _WIN32
+    TCHAR timezonekeyname[] { TEXT( "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Time Zones\\Central European Standard Time" ) };
+    HKEY timezonekey { NULL };
+    DWORD size { sizeof( registrytimezoneinfo ) };
+    if( ::RegOpenKeyEx( HKEY_LOCAL_MACHINE, timezonekeyname, 0, KEY_QUERY_VALUE, &timezonekey ) == ERROR_SUCCESS ) {
+        ::RegQueryValueEx( timezonekey, "TZI", NULL, NULL, (BYTE *)&registrytimezoneinfo, &size );
+    }
+#endif
+    TIME_ZONE_INFORMATION timezoneinfo { 0 };
+    timezoneinfo.Bias = registrytimezoneinfo.Bias;
+    timezoneinfo.DaylightBias = registrytimezoneinfo.DaylightBias;
+    timezoneinfo.DaylightDate = registrytimezoneinfo.DaylightDate;
+    timezoneinfo.StandardBias = registrytimezoneinfo.StandardBias;
+    timezoneinfo.StandardDate = registrytimezoneinfo.StandardDate;
+
+    auto zonebias { timezoneinfo.Bias };
+    if( m_yearday < year_day( timezoneinfo.DaylightDate.wDay, timezoneinfo.DaylightDate.wMonth, m_time.wYear ) ) {
+        zonebias += timezoneinfo.StandardBias;
+    }
+    else if( m_yearday < year_day( timezoneinfo.StandardDate.wDay, timezoneinfo.StandardDate.wMonth, m_time.wYear ) ) {
+        zonebias += timezoneinfo.DaylightBias;
+    }
+    else {
+        zonebias += timezoneinfo.StandardBias;
+    }
+
+    m_timezonebias = ( zonebias / 60.0 );
 }
 
 void
@@ -198,15 +237,14 @@ void TWorld::TrainDelete(TDynamicObject *d)
         if (Train)
             if (Train->Dynamic() != d)
                 return; // nie tego usuwać
-#ifdef EU07_SCENERY_EDITOR
-    if( ( Train->DynamicObject )
-     && ( Train->DynamicObject->Mechanik ) ) {
+/*
+    if( ( Train->Dynamic() )
+     && ( Train->Dynamic()->Mechanik ) ) {
         // likwidacja kabiny wymaga przejęcia przez AI
-        Train->DynamicObject->Mechanik->TakeControl( true );
+        Train->Dynamic()->Mechanik->TakeControl( true );
     }
-#endif
-    delete Train; // i nie ma czym sterować
-    Train = NULL;
+*/
+    SafeDelete( Train ); // i nie ma czym sterować
     Controlled = NULL; // tego też już nie ma
     mvControlled = NULL;
 };
@@ -311,49 +349,47 @@ bool TWorld::Init( GLFWwindow *Window ) {
 
 void TWorld::OnKeyDown(int cKey) {
     // dump keypress info in the log
-    if( !Global.iPause ) {
-        // podczas pauzy klawisze nie działają
-        std::string keyinfo;
-        auto keyname = glfwGetKeyName( cKey, 0 );
-        if( keyname != nullptr ) {
-            keyinfo += std::string( keyname );
-        }
-        else {
-            switch( cKey ) {
+    // podczas pauzy klawisze nie działają
+    std::string keyinfo;
+    auto keyname = glfwGetKeyName( cKey, 0 );
+    if( keyname != nullptr ) {
+        keyinfo += std::string( keyname );
+    }
+    else {
+        switch( cKey ) {
 
-                case GLFW_KEY_SPACE: { keyinfo += "Space"; break; }
-                case GLFW_KEY_ENTER: { keyinfo += "Enter"; break; }
-                case GLFW_KEY_ESCAPE: { keyinfo += "Esc"; break; }
-                case GLFW_KEY_TAB: { keyinfo += "Tab"; break; }
-                case GLFW_KEY_INSERT: { keyinfo += "Insert"; break; }
-                case GLFW_KEY_DELETE: { keyinfo += "Delete"; break; }
-                case GLFW_KEY_HOME: { keyinfo += "Home"; break; }
-                case GLFW_KEY_END: { keyinfo += "End"; break; }
-                case GLFW_KEY_F1: { keyinfo += "F1"; break; }
-                case GLFW_KEY_F2: { keyinfo += "F2"; break; }
-                case GLFW_KEY_F3: { keyinfo += "F3"; break; }
-                case GLFW_KEY_F4: { keyinfo += "F4"; break; }
-                case GLFW_KEY_F5: { keyinfo += "F5"; break; }
-                case GLFW_KEY_F6: { keyinfo += "F6"; break; }
-                case GLFW_KEY_F7: { keyinfo += "F7"; break; }
-                case GLFW_KEY_F8: { keyinfo += "F8"; break; }
-                case GLFW_KEY_F9: { keyinfo += "F9"; break; }
-                case GLFW_KEY_F10: { keyinfo += "F10"; break; }
-                case GLFW_KEY_F11: { keyinfo += "F11"; break; }
-                case GLFW_KEY_F12: { keyinfo += "F12"; break; }
-                case GLFW_KEY_PAUSE: { keyinfo += "Pause"; break; }
-            }
+            case GLFW_KEY_SPACE: { keyinfo += "Space"; break; }
+            case GLFW_KEY_ENTER: { keyinfo += "Enter"; break; }
+            case GLFW_KEY_ESCAPE: { keyinfo += "Esc"; break; }
+            case GLFW_KEY_TAB: { keyinfo += "Tab"; break; }
+            case GLFW_KEY_INSERT: { keyinfo += "Insert"; break; }
+            case GLFW_KEY_DELETE: { keyinfo += "Delete"; break; }
+            case GLFW_KEY_HOME: { keyinfo += "Home"; break; }
+            case GLFW_KEY_END: { keyinfo += "End"; break; }
+            case GLFW_KEY_F1: { keyinfo += "F1"; break; }
+            case GLFW_KEY_F2: { keyinfo += "F2"; break; }
+            case GLFW_KEY_F3: { keyinfo += "F3"; break; }
+            case GLFW_KEY_F4: { keyinfo += "F4"; break; }
+            case GLFW_KEY_F5: { keyinfo += "F5"; break; }
+            case GLFW_KEY_F6: { keyinfo += "F6"; break; }
+            case GLFW_KEY_F7: { keyinfo += "F7"; break; }
+            case GLFW_KEY_F8: { keyinfo += "F8"; break; }
+            case GLFW_KEY_F9: { keyinfo += "F9"; break; }
+            case GLFW_KEY_F10: { keyinfo += "F10"; break; }
+            case GLFW_KEY_F11: { keyinfo += "F11"; break; }
+            case GLFW_KEY_F12: { keyinfo += "F12"; break; }
+            case GLFW_KEY_PAUSE: { keyinfo += "Pause"; break; }
         }
-        if( keyinfo.empty() == false ) {
+    }
+    if( keyinfo.empty() == false ) {
 
-            std::string keymodifiers;
-            if( Global.shiftState )
-                keymodifiers += "[Shift]+";
-            if( Global.ctrlState )
-                keymodifiers += "[Ctrl]+";
+        std::string keymodifiers;
+        if( Global.shiftState )
+            keymodifiers += "[Shift]+";
+        if( Global.ctrlState )
+            keymodifiers += "[Ctrl]+";
 
-            WriteLog( "Key pressed: " + keymodifiers + "[" + keyinfo + "]" );
-        }
+        WriteLog( "Key pressed: " + keymodifiers + "[" + keyinfo + "]" );
     }
 
     // actual key processing
@@ -501,6 +537,14 @@ void TWorld::OnKeyDown(int cKey) {
                             glPolygonMode( GL_FRONT_AND_BACK, GL_FILL );
                         }
                     }
+                }
+                break;
+            }
+            case GLFW_KEY_F11: {
+                // scenery export
+                if( Global.ctrlState
+                 && Global.shiftState ) {
+                    simulation::State.export_as_text( Global.SceneryFile );
                 }
                 break;
             }

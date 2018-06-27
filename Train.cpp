@@ -740,12 +740,22 @@ void TTrain::OnCommand_mastercontrollerdecreasefast( TTrain *Train, command_data
 
 void TTrain::OnCommand_mastercontrollerset( TTrain *Train, command_data const &Command ) {
 
-    auto const targetposition { std::min<int>( Command.param1, Train->mvControlled->MainCtrlPosNo ) };
-    while( targetposition < Train->mvControlled->MainCtrlPos ) {
-        Train->mvControlled->DecMainCtrl( 1 );
+    auto positionchange {
+        std::min<int>(
+            Command.param1,
+            ( Train->mvControlled->CoupledCtrl ?
+                Train->mvControlled->MainCtrlPosNo + Train->mvControlled->ScndCtrlPosNo :
+                Train->mvControlled->MainCtrlPosNo ) )
+        - ( Train->mvControlled->CoupledCtrl ?
+                Train->mvControlled->MainCtrlPos + Train->mvControlled->ScndCtrlPos :
+                Train->mvControlled->MainCtrlPos ) };
+    while( ( positionchange < 0 )
+        && ( true == Train->mvControlled->DecMainCtrl( 1 ) ) ) {
+        ++positionchange;
     }
-    while( targetposition > Train->mvControlled->MainCtrlPos ) {
-        Train->mvControlled->IncMainCtrl( 1 );
+    while( ( positionchange > 0 )
+        && ( true == Train->mvControlled->IncMainCtrl( 1 ) ) ) {
+        --positionchange;
     }
 }
 
@@ -850,11 +860,15 @@ void TTrain::OnCommand_secondcontrollerdecreasefast( TTrain *Train, command_data
 void TTrain::OnCommand_secondcontrollerset( TTrain *Train, command_data const &Command ) {
 
     auto const targetposition { std::min<int>( Command.param1, Train->mvControlled->ScndCtrlPosNo ) };
-    while( targetposition < Train->mvControlled->ScndCtrlPos ) {
-        Train->mvControlled->DecScndCtrl( 1 );
+    while( ( targetposition < Train->mvControlled->ScndCtrlPos )
+        && ( true == Train->mvControlled->DecScndCtrl( 1 ) ) ) {
+        // all work is done in the header
+        ;
     }
-    while( targetposition > Train->mvControlled->ScndCtrlPos ) {
-        Train->mvControlled->IncScndCtrl( 1 );
+    while( ( targetposition > Train->mvControlled->ScndCtrlPos )
+        && ( true == Train->mvControlled->IncScndCtrl( 1 ) ) ) {
+        // all work is done in the header
+        ;
     }
 }
 
@@ -905,7 +919,12 @@ void TTrain::OnCommand_independentbrakedecreasefast( TTrain *Train, command_data
 }
 
 void TTrain::OnCommand_independentbrakeset( TTrain *Train, command_data const &Command ) {
-    
+
+    Train->mvControlled->LocalBrakePosA = (
+        clamp(
+            reinterpret_cast<double const &>( Command.param1 ),
+            0.0, 1.0 ) );
+/*
     Train->mvControlled->LocalBrakePos = (
         std::round(
             interpolate<double>(
@@ -914,6 +933,7 @@ void TTrain::OnCommand_independentbrakeset( TTrain *Train, command_data const &C
                 clamp(
                     reinterpret_cast<double const &>( Command.param1 ),
                     0.0, 1.0 ) ) ) );
+*/
 }
 
 void TTrain::OnCommand_independentbrakebailoff( TTrain *Train, command_data const &Command ) {
@@ -4331,7 +4351,7 @@ bool TTrain::Update( double const Deltatime )
 
         tor = DynamicObject->GetTrack(); // McZapkie-180203
         // McZapkie: predkosc wyswietlana na tachometrze brana jest z obrotow kol
-        float maxtacho = 3;
+        auto const maxtacho { 3.0 };
         fTachoVelocity = static_cast<float>( std::min( std::abs(11.31 * mvControlled->WheelDiameter * mvControlled->nrot), mvControlled->Vmax * 1.05) );
         { // skacze osobna zmienna
             float ff = simulation::Time.data().wSecond; // skacze co sekunde - pol sekundy
@@ -4347,12 +4367,12 @@ bool TTrain::Update( double const Deltatime )
         }
         if (fTachoVelocity > 1) // McZapkie-270503: podkrecanie tachometru
         {
-            if (fTachoCount < maxtacho)
-                fTachoCount += Deltatime * 3; // szybciej zacznij stukac
+            // szybciej zacznij stukac
+            fTachoCount = std::min( maxtacho, fTachoCount + Deltatime * 3 );
         }
         else if( fTachoCount > 0 ) {
             // schodz powoli - niektore haslery to ze 4 sekundy potrafia stukac
-            fTachoCount -= Deltatime * 0.66;
+            fTachoCount = std::max( 0.0, fTachoCount - Deltatime * 0.66 );
         }
 
         // Ra 2014-09: napięcia i prądy muszą być ustalone najpierw, bo wysyłane są ewentualnie na PoKeys
@@ -5160,7 +5180,7 @@ bool TTrain::Update( double const Deltatime )
 #endif
             {
                 // standardowa prodedura z kranem powiązanym z klawiaturą
-                ggLocalBrake.UpdateValue( double( mvOccupied->LocalBrakePos ) );
+                ggLocalBrake.UpdateValue( std::max<double>( mvOccupied->LocalBrakePos, mvOccupied->LocalBrakePosA * LocalBrakePosNo ) );
             }
             ggLocalBrake.Update();
         }
@@ -5184,10 +5204,8 @@ bool TTrain::Update( double const Deltatime )
         //---------
         // hunter-080812: poprawka na ogrzewanie w elektrykach - usuniete uzaleznienie od przetwornicy
         if( ( mvControlled->Heating == true )
-         && ( ( mvControlled->ConverterFlag )
-           || ( ( mvControlled->EngineType == ElectricSeriesMotor )
-             && ( mvControlled->Mains == true )
-             && ( mvControlled->ConvOvldFlag == false ) ) ) )
+         && ( mvControlled->Mains == true )
+         && ( mvControlled->ConvOvldFlag == false ) )
             btLampkaOgrzewanieSkladu.Turn( true );
         else
             btLampkaOgrzewanieSkladu.Turn( false );
@@ -5633,7 +5651,7 @@ TTrain::update_sounds( double const Deltatime ) {
         m_radiostop.stop();
     }
 
-    if( fTachoCount > 3.f ) {
+    if( fTachoCount >= 3.f ) {
         auto const frequency { (
             true == dsbHasler.is_combined() ?
                 fTachoVelocity * 0.01 :
@@ -6337,6 +6355,7 @@ void TTrain::clear_cab_controls()
     ggRadioTest.Clear();
     ggDoorLeftButton.Clear();
     ggDoorRightButton.Clear();
+    ggTrainHeatingButton.Clear();
     ggDepartureSignalButton.Clear();
     ggCompressorButton.Clear();
     ggConverterButton.Clear();

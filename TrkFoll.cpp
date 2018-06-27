@@ -101,7 +101,7 @@ bool TTrackFollower::Move(double fDistance, bool bPrimary)
     { // pętla przesuwająca wózek przez kolejne tory, aż do trafienia w jakiś
         if( pCurrentTrack == nullptr ) { return false; } // nie ma toru, to nie ma przesuwania
         // TODO: refactor following block as track method
-        if( pCurrentTrack->iEvents ) { // sumaryczna informacja o eventach
+        if( pCurrentTrack->m_events ) { // sumaryczna informacja o eventach
             // omijamy cały ten blok, gdy tor nie ma on żadnych eventów (większość nie ma)
             if( ( std::abs( fDistance ) < 0.01 )
              && ( Owner->GetVelocity() < 0.01 ) ) {
@@ -109,15 +109,9 @@ bool TTrackFollower::Move(double fDistance, bool bPrimary)
                 if( ( Owner->Mechanik != nullptr )
                  && ( Owner->Mechanik->Primary() ) ) {
                     // tylko dla jednego członu
-                    if( ( pCurrentTrack->evEvent0 )
-                     && ( pCurrentTrack->evEvent0->iQueued == 0 ) ) {
-                        simulation::Events.AddToQuery( pCurrentTrack->evEvent0, Owner );
-                    }
+                    pCurrentTrack->QueueEvents( pCurrentTrack->m_events0, Owner );
                 }
-                if( ( pCurrentTrack->evEventall0 )
-                 && ( pCurrentTrack->evEventall0->iQueued == 0 ) ) {
-                    simulation::Events.AddToQuery( pCurrentTrack->evEventall0, Owner );
-                }
+                pCurrentTrack->QueueEvents( pCurrentTrack->m_events0all, Owner );
             }
             else if (fDistance < 0) {
                 // event1, eventall1
@@ -127,20 +121,15 @@ bool TTrackFollower::Move(double fDistance, bool bPrimary)
                      && ( Owner->Mechanik->Primary() ) ) {
                         // tylko dla jednego członu
                         // McZapkie-280503: wyzwalanie event tylko dla pojazdow z obsada
-                        if( ( true == bPrimary )
-                         && ( pCurrentTrack->evEvent1 != nullptr )
-                         && ( pCurrentTrack->evEvent1->iQueued == 0 ) ) {
-                            // dodanie do kolejki
-                            simulation::Events.AddToQuery( pCurrentTrack->evEvent1, Owner );
+                        if( true == bPrimary ) {
+                            pCurrentTrack->QueueEvents( pCurrentTrack->m_events1, Owner );
                         }
                     }
                 }
                 if( SetFlag( iEventallFlag, -1 ) ) {
                     // McZapkie-280503: wyzwalanie eventall dla wszystkich pojazdow
-                    if( ( true == bPrimary )
-                     && ( pCurrentTrack->evEventall1 != nullptr )
-                     && ( pCurrentTrack->evEventall1->iQueued == 0 ) ) {
-                        simulation::Events.AddToQuery( pCurrentTrack->evEventall1, Owner ); // dodanie do kolejki
+                    if( true == bPrimary ) {
+                        pCurrentTrack->QueueEvents( pCurrentTrack->m_events1all, Owner );
                     }
                 }
             }
@@ -151,19 +140,15 @@ bool TTrackFollower::Move(double fDistance, bool bPrimary)
                     if( ( Owner->Mechanik != nullptr )
                      && ( Owner->Mechanik->Primary() ) ) {
                         // tylko dla jednego członu
-                        if( ( true == bPrimary )
-                         && ( pCurrentTrack->evEvent2 != nullptr )
-                         && ( pCurrentTrack->evEvent2->iQueued == 0 ) ) {
-                            simulation::Events.AddToQuery( pCurrentTrack->evEvent2, Owner );
+                        if( true == bPrimary ) {
+                            pCurrentTrack->QueueEvents( pCurrentTrack->m_events2, Owner );
                         }
                     }
                 }
                 if( SetFlag( iEventallFlag, -2 ) ) {
                     // sprawdza i zeruje na przyszłość, true jeśli zmieni z 2 na 0
-                    if( ( true == bPrimary )
-                     && ( pCurrentTrack->evEventall2 != nullptr )
-                     && ( pCurrentTrack->evEventall2->iQueued == 0 ) ) {
-                        simulation::Events.AddToQuery( pCurrentTrack->evEventall2, Owner );
+                    if( true == bPrimary ) {
+                        pCurrentTrack->QueueEvents( pCurrentTrack->m_events2all, Owner );
                     }
                 }
             }
@@ -258,21 +243,15 @@ bool TTrackFollower::Move(double fDistance, bool bPrimary)
         { // gdy zostaje na tym samym torze (przesuwanie już nie zmienia toru)
             if (bPrimary)
             { // tylko gdy początkowe ustawienie, dodajemy eventy stania do kolejki
-                if (Owner->MoverParameters->ActiveCab != 0)
-                // if (Owner->MoverParameters->CabNo!=0)
-                {
-                    if (pCurrentTrack->evEvent1 && pCurrentTrack->evEvent1->fDelay <= -1.0f)
-                        simulation::Events.AddToQuery(pCurrentTrack->evEvent1, Owner);
-                    if (pCurrentTrack->evEvent2 && pCurrentTrack->evEvent2->fDelay <= -1.0f)
-                        simulation::Events.AddToQuery(pCurrentTrack->evEvent2, Owner);
+                if (Owner->MoverParameters->ActiveCab != 0) {
+
+                    pCurrentTrack->QueueEvents( pCurrentTrack->m_events1, Owner, -1.0 );
+                    pCurrentTrack->QueueEvents( pCurrentTrack->m_events2, Owner, -1.0 );
                 }
-                if (pCurrentTrack->evEventall1 && pCurrentTrack->evEventall1->fDelay <= -1.0f)
-                    simulation::Events.AddToQuery(pCurrentTrack->evEventall1, Owner);
-                if (pCurrentTrack->evEventall2 && pCurrentTrack->evEventall2->fDelay <= -1.0f)
-                    simulation::Events.AddToQuery(pCurrentTrack->evEventall2, Owner);
+                pCurrentTrack->QueueEvents( pCurrentTrack->m_events1all, Owner, -1.0 );
+                pCurrentTrack->QueueEvents( pCurrentTrack->m_events2all, Owner, -1.0 );
             }
             fCurrentDistance = s;
-            // fDistance=0;
             return ComputatePosition(); // przeliczenie XYZ, true o ile nie wyjechał na NULL
         }
     }

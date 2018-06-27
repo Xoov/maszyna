@@ -52,6 +52,8 @@ struct opengl_technique {
 class opengl_camera {
 
 public:
+// constructors
+    opengl_camera() = default;
 // methods:
     inline
     void
@@ -113,10 +115,10 @@ class opengl_renderer {
 
 public:
 // types
-
+// constructors
+    opengl_renderer() = default;
 // destructor
     ~opengl_renderer() { gluDeleteQuadric( m_quadric ); }
-
 // methods
     bool
         Init( GLFWwindow *Window );
@@ -163,14 +165,14 @@ public:
     // utility methods
     TSubModel const *
         Pick_Control() const { return m_pickcontrolitem; }
-    editor::basic_node const *
+    scene::basic_node const *
         Pick_Node() const { return m_picksceneryitem; }
     // maintenance methods
     void
         Update( double const Deltatime );
     TSubModel const *
         Update_Pick_Control();
-    editor::basic_node const *
+    scene::basic_node const *
         Update_Pick_Node();
     // debug methods
     std::string const &
@@ -287,7 +289,7 @@ private:
     bool
         Render_cab( TDynamicObject const *Dynamic, bool const Alpha = false );
     void
-        Render( TMemCell *Memcell );
+        Render( TMemCell const *Memcell );
     void
         Render_Alpha( scene::basic_region *Region );
     void
@@ -320,7 +322,9 @@ private:
     texture_manager m_textures;
     opengl_light m_sunlight;
     opengllight_array m_lights;
-
+/*
+    float m_sunandviewangle; // cached dot product of sunlight and camera vectors
+*/
     gfx::geometry_handle m_billboardgeometry { 0, 0 };
     texture_handle m_glaretexture { -1 };
     texture_handle m_suntexture { -1 };
@@ -386,8 +390,8 @@ private:
     renderpass_config m_cabshadowpass; // parameters of most recent cab shadowmap pass
     std::vector<TSubModel const *> m_pickcontrolsitems;
     TSubModel const *m_pickcontrolitem { nullptr };
-    std::vector<editor::basic_node const *> m_picksceneryitems;
-    editor::basic_node const *m_picksceneryitem { nullptr };
+    std::vector<scene::basic_node const *> m_picksceneryitems;
+    scene::basic_node const *m_picksceneryitem { nullptr };
 #ifdef EU07_USE_DEBUG_CAMERA
     renderpass_config m_worldcamera; // debug item
 #endif

@@ -124,7 +124,6 @@ basic_cell::update_events() {
 void
 basic_cell::update_sounds() {
 
-    auto const deltatime = Timer::GetDeltaRenderTime();
     for( auto *sound : m_sounds ) {
         sound->play_event();
     }
@@ -226,6 +225,17 @@ basic_cell::deserialize( std::istream &Input ) {
         ( false == m_shapesopaque.empty() )
      || ( false == m_shapestranslucent.empty() )
      || ( false == m_lines.empty() ) );
+}
+
+// sends content of the class in legacy (text) format to provided stream
+void
+basic_cell::export_as_text( std::ostream &Output ) const {
+
+    // text format export dumps only relevant basic objects
+    // sounds
+    for( auto const *sound : m_sounds ) {
+        sound->export_as_text( Output );
+    }
 }
 
 // adds provided shape to the cell
@@ -350,6 +360,7 @@ basic_cell::insert( sound_source *Sound ) {
     m_active = true;
 
     m_sounds.emplace_back( Sound );
+    // NOTE: sound sources are virtual 'points' hence they don't ever expand cell range
 }
 
 // adds provided sound instance to the cell
@@ -361,6 +372,16 @@ basic_cell::insert( TEventLauncher *Launcher ) {
     m_eventlaunchers.emplace_back( Launcher );
     // re-calculate cell bounding area, in case launcher range extends outside the cell's boundaries
     enclose_area( Launcher );
+}
+
+// adds provided memory cell to the cell
+void
+basic_cell::insert( TMemCell *Memorycell ) {
+
+    m_active = true;
+
+    m_memorycells.emplace_back( Memorycell );
+    // NOTE: memory cells are virtual 'points' hence they don't ever expand cell range
 }
 
 // registers provided path in the lookup directory of the cell
@@ -421,7 +442,7 @@ basic_cell::find( glm::dvec3 const &Point, float const Radius, bool const Onlyco
             std::tie( vehiclenearest, leastdistance ) = std::tie( vehicle, distance );
         }
     }
-    return std::tie( vehiclenearest, leastdistance );
+    return { vehiclenearest, leastdistance };
 }
 
 // finds a path with one of its ends located in specified point. returns: located path and id of the matching endpoint
@@ -438,7 +459,7 @@ basic_cell::find( glm::dvec3 const &Point, TTrack const *Exclude ) const {
         endpointid = path->TestPoint( &point );
         if( endpointid >= 0 ) {
 
-            return std::tie( path, endpointid );
+            return { path, endpointid };
         }
     }
     return { nullptr, -1 };
@@ -457,7 +478,7 @@ basic_cell::find( glm::dvec3 const &Point, TTraction const *Exclude ) const {
         endpointid = traction->TestPoint( Point );
         if( endpointid >= 0 ) {
 
-            return std::tie( traction, endpointid );
+            return { traction, endpointid };
         }
     }
     return { nullptr, -1 };
@@ -530,7 +551,7 @@ basic_cell::create_geometry( gfx::geometrybank_handle const &Bank ) {
 
 // adjusts cell bounding area to enclose specified node
 void
-basic_cell::enclose_area( editor::basic_node *Node ) {
+basic_cell::enclose_area( scene::basic_node *Node ) {
 
     m_area.radius = std::max(
         m_area.radius,
@@ -645,6 +666,16 @@ basic_section::deserialize( std::istream &Input ) {
     }
 }
 
+// sends content of the class in legacy (text) format to provided stream
+void
+basic_section::export_as_text( std::ostream &Output ) const {
+
+    // text format export dumps only relevant basic objects from non-empty cells
+    for( auto const &cell : m_cells ) {
+        cell.export_as_text( Output );
+    }
+}
+
 // adds provided shape to the section
 void
 basic_section::insert( shape_node Shape ) {
@@ -708,7 +739,7 @@ basic_section::find( glm::dvec3 const &Point, float const Radius, bool const Onl
             std::tie( vehiclenearest, distancenearest ) = std::tie( vehiclefound, distancefound );
         }
     }
-    return std::tie( vehiclenearest, distancenearest );
+    return { vehiclenearest, distancenearest };
 }
 
 // finds a path with one of its ends located in specified point. returns: located path and id of the matching endpoint
@@ -949,6 +980,18 @@ basic_region::deserialize( std::string const &Scenariofile ) {
     return true;
 }
 
+// sends content of the class in legacy (text) format to provided stream
+void
+basic_region::export_as_text( std::ostream &Output ) const {
+
+    for( auto *section : m_sections ) {
+        // text format export dumps only relevant basic objects from non-empty sections
+        if( section != nullptr ) {
+            section->export_as_text( Output );
+        }
+    }
+}
+
 // legacy method, links specified path piece with potential neighbours
 void
 basic_region::TrackJoin( TTrack *Track ) {
@@ -1100,7 +1143,6 @@ basic_region::insert_lines( lines_node Lines, scratch_data &Scratchpad ) {
 // inserts provided track in the region
 void
 basic_region::insert_path( TTrack *Path, scratch_data &Scratchpad ) {
-
     // NOTE: bounding area isn't present/filled until track class and wrapper refactoring is done
     auto location = Path->location();
 
@@ -1122,7 +1164,6 @@ basic_region::insert_path( TTrack *Path, scratch_data &Scratchpad ) {
 // inserts provided track in the region
 void
 basic_region::insert_traction( TTraction *Traction, scratch_data &Scratchpad ) {
-
     // NOTE: bounding area isn't present/filled until track class and wrapper refactoring is done
     auto location = Traction->location();
 
@@ -1144,7 +1185,6 @@ basic_region::insert_traction( TTraction *Traction, scratch_data &Scratchpad ) {
 // inserts provided instance of 3d model in the region
 void
 basic_region::insert_instance( TAnimModel *Instance, scratch_data &Scratchpad ) {
-
     // NOTE: bounding area isn't present/filled until track class and wrapper refactoring is done
     auto location = Instance->location();
 
@@ -1177,7 +1217,6 @@ basic_region::insert_sound( sound_source *Sound, scratch_data &Scratchpad ) {
 // inserts provided event launcher in the region
 void
 basic_region::insert_launcher( TEventLauncher *Launcher, scratch_data &Scratchpad ) {
-
     // NOTE: bounding area isn't present/filled until track class and wrapper refactoring is done
     auto location = Launcher->location();
 
@@ -1188,6 +1227,22 @@ basic_region::insert_launcher( TEventLauncher *Launcher, scratch_data &Scratchpa
     else {
         // tracks are guaranteed to hava a name so we can skip the check
         ErrorLog( "Bad scenario: event launcher \"" + Launcher->name() + "\" placed in location outside region bounds (" + to_string( location ) + ")" );
+    }
+}
+
+// inserts provided memory cell in the region
+void
+basic_region::insert_memorycell( TMemCell *Memorycell, scratch_data &Scratchpad ) {
+    // NOTE: bounding area isn't present/filled until track class and wrapper refactoring is done
+    auto location = Memorycell->location();
+
+    if( point_inside( location ) ) {
+        // NOTE: nodes placed outside of region boundaries are discarded
+        section( location ).insert( Memorycell );
+    }
+    else {
+        // tracks are guaranteed to hava a name so we can skip the check
+        ErrorLog( "Bad scenario: memory cell \"" + Memorycell->name() + "\" placed in location outside region bounds (" + to_string( location ) + ")" );
     }
 }
 
@@ -1212,7 +1267,7 @@ basic_region::find_vehicle( glm::dvec3 const &Point, float const Radius, bool co
             std::tie( nearestvehicle, nearestdistance ) = std::tie( foundvehicle, founddistance );
         }
     }
-    return std::tie( nearestvehicle, nearestdistance );
+    return { nearestvehicle, nearestdistance };
 }
 
 // finds a path with one of its ends located in specified point. returns: located path and id of the matching endpoint
@@ -1225,7 +1280,7 @@ basic_region::find_path( glm::dvec3 const &Point, TTrack const *Exclude ) {
         return section( Point ).find( Point, Exclude );
     }
 
-    return std::make_tuple<TTrack *, int>( nullptr, -1 );
+    return { nullptr, -1 };
 }
 
 // finds a traction piece with one of its ends located in specified point. returns: located traction piece and id of the matching endpoint
@@ -1238,7 +1293,7 @@ basic_region::find_traction( glm::dvec3 const &Point, TTraction const *Exclude )
         return section( Point ).find( Point, Exclude );
     }
 
-    return std::make_tuple<TTraction *, int>( nullptr, -1 );
+    return { nullptr, -1 };
 }
 
 // finds a traction piece located nearest to specified point, sharing section with specified other piece and powered in specified direction. returns: located traction piece

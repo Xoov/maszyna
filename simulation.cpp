@@ -16,6 +16,7 @@ http://mozilla.org/MPL/2.0/.
 #include "uilayer.h"
 #include "renderer.h"
 
+
 namespace simulation {
 
 state_manager State;
@@ -57,8 +58,6 @@ state_manager::deserialize( std::string const &Scenariofile ) {
         // as long as the scenario file wasn't rainsted-created base file override
         Region->serialize( Scenariofile );
     }
-
-    Global.iPause &= ~0x10; // koniec pauzy wczytywania
     return true;
 }
 
@@ -409,7 +408,7 @@ state_manager::deserialize_node( cParser &Input, scene::scratch_data &Scratchpad
         if( false == Scratchpad.binary.terrain ) {
 
             simulation::Region->insert_shape(
-                scene::shape_node().deserialize(
+                scene::shape_node().import(
                     Input, nodedata ),
                 Scratchpad,
                 true );
@@ -426,7 +425,7 @@ state_manager::deserialize_node( cParser &Input, scene::scratch_data &Scratchpad
         if( false == Scratchpad.binary.terrain ) {
 
             simulation::Region->insert_lines(
-                scene::lines_node().deserialize(
+                scene::lines_node().import(
                     Input, nodedata ),
                 Scratchpad );
         }
@@ -439,12 +438,9 @@ state_manager::deserialize_node( cParser &Input, scene::scratch_data &Scratchpad
 
         auto *memorycell { deserialize_memorycell( Input, Scratchpad, nodedata ) };
         if( false == simulation::Memory.insert( memorycell ) ) {
-            ErrorLog( "Bad scenario: memory cell with duplicate name \"" + memorycell->name() + "\" encountered in file \"" + Input.Name() + "\" (line " + std::to_string( inputline ) + ")" );
+            ErrorLog( "Bad scenario: memory memorycell with duplicate name \"" + memorycell->name() + "\" encountered in file \"" + Input.Name() + "\" (line " + std::to_string( inputline ) + ")" );
         }
-/*
-        // TODO: implement this
-        simulation::Region.insert_memorycell( memorycell, Scratchpad );
-*/
+        simulation::Region->insert_memorycell( memorycell, Scratchpad );
     }
     else if( nodedata.type == "eventlauncher" ) {
 
@@ -790,7 +786,7 @@ state_manager::deserialize_dynamic( cParser &Input, scene::scratch_data &Scratch
     }
 
     if( ( true == Scratchpad.trainset.vehicles.empty() ) // jeśli pierwszy pojazd,
-     && ( false == path->asEvent0Name.empty() ) // tor ma Event0
+     && ( false == path->m_events0.empty() ) // tor ma Event0
      && ( std::abs( velocity ) <= 1.f ) // a skład stoi
      && ( Scratchpad.trainset.offset >= 0.0 ) // ale może nie sięgać na owy tor
      && ( Scratchpad.trainset.offset <  8.0 ) ) { // i raczej nie sięga
@@ -895,6 +891,65 @@ state_manager::transform( glm::dvec3 Location, scene::scratch_data const &Scratc
         Location += Scratchpad.location.offset.top();
     }
     return Location;
+}
+
+
+// stores class data in specified file, in legacy (text) format
+void
+state_manager::export_as_text( std::string const &Scenariofile ) const {
+
+    if( Scenariofile == "$.scn" ) {
+        ErrorLog( "Bad file: scenery export not supported for file \"$.scn\"" );
+    }
+    else {
+        WriteLog( "Scenery data export in progress..." );
+    }
+
+    auto filename { Scenariofile };
+    while( filename[ 0 ] == '$' ) {
+        // trim leading $ char rainsted utility may add to the base name for modified .scn files
+        filename.erase( 0, 1 );
+    }
+    erase_extension( filename );
+    filename = Global.asCurrentSceneryPath + filename + "_export";
+
+    std::ofstream scmfile { filename + ".scm" };
+    // tracks
+    scmfile << "// paths\n";
+    for( auto const *path : Paths.sequence() ) {
+        path->export_as_text( scmfile );
+    }
+    // traction
+    scmfile << "// traction\n";
+    for( auto const *traction : Traction.sequence() ) {
+        traction->export_as_text( scmfile );
+    }
+    // power grid
+    scmfile << "// traction power sources\n";
+    for( auto const *powersource : Powergrid.sequence() ) {
+        powersource->export_as_text( scmfile );
+    }
+    // models
+    scmfile << "// instanced models\n";
+    for( auto const *instance : Instances.sequence() ) {
+        instance->export_as_text( scmfile );
+    }
+    // sounds
+    scmfile << "// sounds\n";
+    Region->export_as_text( scmfile );
+
+    std::ofstream ctrfile { filename + ".ctr" };
+    // mem cells
+    ctrfile << "// memory cells\n";
+    for( auto const *memorycell : Memory.sequence() ) {
+        if( true == memorycell->is_exportable ) {
+            memorycell->export_as_text( ctrfile );
+        }
+    }
+    // events
+    Events.export_as_text( ctrfile );
+
+    WriteLog( "Scenery data export done." );
 }
 
 } // simulation

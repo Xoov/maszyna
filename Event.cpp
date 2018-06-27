@@ -39,7 +39,6 @@ TEvent::~TEvent() {
     switch (Type)
     { // sprzątanie
     case tp_Multiple:
-        // SafeDeleteArray(Params[9].asText); //nie usuwać - nazwa obiektu powiązanego zamieniana na wskaźnik
         if (iFlags & conditional_memstring) // o ile jest łańcuch do porównania w memcompare
             SafeDeleteArray(Params[10].asText);
         break;
@@ -71,12 +70,6 @@ void TEvent::Conditions(cParser *parser, std::string s)
     if (s == "condition")
     { // jesli nie "endevent"
         std::string token, str;
-        if (!asNodeName.empty())
-        { // podczepienie łańcucha, jeśli nie jest pusty
-			// BUG: source of a memory leak -- the array never gets deleted. fix the destructor
-            Params[9].asText = new char[asNodeName.size() + 1]; // usuwane i zamieniane na wskaźnik
-            strcpy(Params[9].asText, asNodeName.c_str());
-        }
         parser->getTokens();
         *parser >> token;
 		str = token;
@@ -304,9 +297,9 @@ void TEvent::Load(cParser *parser, Math3D::vector3 const &org)
             if (token.find('#') != std::string::npos)
 				token.erase(token.find('#')); // obcięcie unikatowości
             win1250_to_ascii( token ); // get rid of non-ascii chars
-            bEnabled = false; // nie do kolejki (dla SetVelocity też, ale jak jest do toru
-            // dowiązany)
             Params[6].asCommand = cm_PassengerStopPoint;
+            // nie do kolejki (dla SetVelocity też, ale jak jest do toru dowiązany)
+            bEnabled = false;
         }
         else if (token == "SetVelocity")
         {
@@ -328,11 +321,6 @@ void TEvent::Load(cParser *parser, Math3D::vector3 const &org)
             bEnabled = false;
             Params[6].asCommand = cm_ShuntVelocity;
         }
-        //else if (str == "SetProximityVelocity")
-        //{
-        //    bEnabled = false;
-        //    Params[6].asCommand = cm_SetProximityVelocity;
-        //}
         else if (token == "OutsideStation")
         {
             bEnabled = false; // ma być skanowny, aby AI nie przekraczało W5
@@ -391,6 +379,11 @@ void TEvent::Load(cParser *parser, Math3D::vector3 const &org)
                 }
             }
         } while( token.compare( "endevent" ) != 0 );
+        while( paramidx < 8 ) {
+            // HACK: mark unspecified lights with magic value
+            Params[ paramidx ].asdouble = -2.0;
+            ++paramidx;
+        }
         break;
     }
     case tp_Visible: // zmiana wyświetlania obiektu
@@ -403,7 +396,7 @@ void TEvent::Load(cParser *parser, Math3D::vector3 const &org)
     case tp_Velocity:
         parser->getTokens();
         *parser >> token;
-        Params[0].asdouble = atof(token.c_str()) * 0.28;
+        Params[0].asdouble = atof(token.c_str()) * ( 1000.0 / 3600.0 );
         parser->getTokens();
         *parser >> token;
         break;
@@ -420,7 +413,6 @@ void TEvent::Load(cParser *parser, Math3D::vector3 const &org)
         *parser >> token;
         break;
     case tp_Exit:
-        asNodeName = ExchangeCharInString( asNodeName, '_', ' ' );
         parser->getTokens();
         *parser >> token;
         break;
@@ -537,8 +529,7 @@ void TEvent::Load(cParser *parser, Math3D::vector3 const &org)
         *parser >> token;
         break;
     case tp_Multiple: {
-        int paramidx { 0 };
-        bool ti { false }; // flaga dla else
+        bool conditionalelse { false }; // flaga dla else
         parser->getTokens();
         *parser >> token;
 
@@ -549,18 +540,7 @@ void TEvent::Load(cParser *parser, Math3D::vector3 const &org)
             if( token != "else" ) {
                 if( token.substr( 0, 5 ) != "none_" ) {
                     // eventy rozpoczynające się od "none_" są ignorowane
-                    if( paramidx < 8 ) {
-                        Params[ paramidx ].asText = new char[ token.size() + 1 ];
-                        strcpy( Params[ paramidx ].asText, token.c_str() );
-                        if( ti ) {
-                            // oflagowanie dla eventów "else"
-                            iFlags |= conditional_else << paramidx;
-                        }
-                        ++paramidx;
-                    }
-                    else {
-                        ErrorLog( "Bad event: multi-event \"" + asName + "\" with more than 8 events; discarding link to event \"" + token + "\"" );
-                    }
+                    m_children.emplace_back( token, nullptr, ( conditionalelse == false ) );
                 }
                 else {
                     WriteLog( "Multi-event \"" + asName + "\" ignored link to event \"" + token + "\"" );
@@ -568,7 +548,8 @@ void TEvent::Load(cParser *parser, Math3D::vector3 const &org)
             }
             else {
                 // zmiana flagi dla słowa "else"
-                ti = !ti;
+                conditionalelse = !conditionalelse;
+                m_conditionalelse = true;
             }
             parser->getTokens();
             *parser >> token;
@@ -604,6 +585,185 @@ void TEvent::Load(cParser *parser, Math3D::vector3 const &org)
         break;
     }
 };
+
+// sends basic content of the class in legacy (text) format to provided stream
+void
+TEvent::export_as_text( std::ostream &Output ) const {
+
+    if( Type == tp_Unknown ) { return; }
+
+    // header
+    Output << "event ";
+    // name
+    Output << asName << ' ';
+    // type
+    std::vector<std::string> const types {
+        "unknown", "sound", "exit", "disable", "velocity", "animation", "lights",
+        "updatevalues", "getvalues", "putvalues", "switch", "dynvel", "trackvel",
+        "multiple", "addvalues", "copyvalues", "whois", "logvalues", "visible",
+        "voltage", "message", "friction" };
+    Output << types[ Type ] << ' ';
+    // delay
+    Output << fDelay << ' ';
+    // associated node
+    Output << ( asNodeName.empty() ? "none" : asNodeName ) << ' ';
+    // type-specific attributes
+    switch( Type ) {
+        case tp_AddValues:
+        case tp_UpdateValues: {
+            Output
+                << ( ( iFlags & update_memstring ) == 0 ? "*" :            Params[ 0 ].asText ) << ' '
+                << ( ( iFlags & update_memval1 )   == 0 ? "*" : to_string( Params[ 1 ].asdouble ) ) << ' '
+                << ( ( iFlags & update_memval2 )   == 0 ? "*" : to_string( Params[ 2 ].asdouble ) ) << ' ';
+            break;
+        }
+        case tp_CopyValues: {
+            // NOTE: there's no way to get the original parameter value if it doesn't point to existing memcell
+            Output
+                << ( Params[ 9 ].asMemCell == nullptr ? "none" : Params[ 9 ].asMemCell->name() ) << ' '
+                << ( iFlags & ( update_memstring | update_memval1 | update_memval2 ) ) << ' ';
+            break;
+        }
+        case tp_PutValues: {
+            Output
+                // location
+                << Params[ 3 ].asdouble << ' '
+                << Params[ 4 ].asdouble << ' '
+                << Params[ 5 ].asdouble << ' '
+                // command
+                << Params[ 0 ].asText << ' '
+                << Params[ 1 ].asdouble << ' '
+                << Params[ 2 ].asdouble << ' ';
+            break;
+        }
+        case tp_Multiple: {
+            for( auto const &childevent : m_children ) {
+                if( std::get<TEvent *>( childevent ) == nullptr ) { continue; }
+                if( true == std::get<bool>( childevent ) ) {
+                    Output << std::get<std::string>( childevent ) << ' ';
+                }
+            }
+            // optional 'else' block
+            if( true == m_conditionalelse ) {
+                Output << "else ";
+                for( auto const &childevent : m_children ) {
+                    if( std::get<TEvent *>( childevent ) == nullptr ) { continue; }
+                    if( false == std::get<bool>( childevent ) ) {
+                        Output << std::get<std::string>( childevent ) << ' ';
+                    }
+                }
+            }
+            break;
+        }
+        case tp_Visible: {
+            Output << Params[ 0 ].asInt << ' ';
+            break;
+        }
+        case tp_Switch: {
+            Output << Params[ 0 ].asInt << ' ';
+            if( ( Params[ 1 ].asdouble != -1.0 )
+            ||  ( Params[ 2 ].asdouble != -1.0 ) ) {
+                Output << Params[ 1 ].asdouble << ' ';
+            }
+            if( Params[ 2 ].asdouble != -1.0 ) {
+                Output << Params[ 2 ].asdouble << ' ';
+            }
+            break;
+        }
+        case tp_Lights: {
+            auto lightidx { 0 };
+            while( ( lightidx < iMaxNumLights )
+                && ( Params[ lightidx ].asdouble > -2.0 ) ) {
+                Output << Params[ lightidx ].asdouble << ' ';
+                ++lightidx;
+            }
+            break;
+        }
+        case tp_Animation: {
+            // animation type
+            Output << (
+                Params[ 0 ].asInt == 1 ? "rotate" :
+                Params[ 0 ].asInt == 2 ? "translate" :
+                // NOTE: .vmd animation doesn't preserve file name, can't be exported. TODO: fix this
+                Params[ 0 ].asInt == 8 ? "digital" :
+                "none" )
+                << ' ';
+            // submodel
+            Output << (
+                Params[ 9 ].asAnimContainer != nullptr ?
+                    Params[ 9 ].asAnimContainer->NameGet() :
+                    "none" ) << ' ';
+            // animation parameters
+            Output
+                << Params[ 1 ].asdouble << ' '
+                << Params[ 2 ].asdouble << ' '
+                << Params[ 3 ].asdouble << ' '
+                << Params[ 4 ].asdouble << ' ';
+            break;
+        }
+        case tp_Sound: {
+            // playback mode
+            Output << Params[ 0 ].asInt << ' ';
+            // optional radio channel
+            if( Params[ 1 ].asdouble > 0.0 ) {
+                Output << Params[ 1 ].asdouble << ' ';
+            }
+            break;
+        }
+        case tp_DynVel:
+        case tp_TrackVel:
+        case tp_Voltage:
+        case tp_Friction: {
+            Output << Params[ 0 ].asdouble << ' ';
+            break;
+        }
+        case tp_Velocity: {
+            Output << Params[ 0 ].asdouble * ( 3600.0 / 1000.0 ) << ' ';
+            break;
+        }
+        case tp_WhoIs: {
+            Output
+                << ( iFlags & ( update_memstring | update_memval1 | update_memval2 ) ) << ' ';
+            break;
+        }
+        default: {
+            break;
+        }
+    }
+    // optional conditions
+    // NOTE: for flexibility condition check and export is performed for all event types rather than only for these which support it currently
+    auto const isconditional { ( conditional_trackoccupied | conditional_trackfree | conditional_propability | conditional_memcompare ) };
+    if( ( ( iFlags & isconditional ) != 0 ) ) {
+        Output << "condition ";
+        if( ( iFlags & conditional_trackoccupied ) != 0 ) {
+            Output << "trackoccupied ";
+        }
+        else if( ( iFlags & conditional_trackfree ) != 0 ) {
+            Output << "trackfree ";
+        }
+        else if( ( iFlags & conditional_propability ) != 0 ) {
+            Output
+                << "propability "
+                << Params[ 10 ].asdouble << ' ';
+        }
+        else if( ( iFlags & conditional_memcompare ) != 0 ) {
+            Output
+                << "memcompare "
+                << ( ( iFlags & conditional_memstring ) == 0 ? "*" :            Params[ 10 ].asText ) << ' '
+                << ( ( iFlags & conditional_memval1 )   == 0 ? "*" : to_string( Params[ 11 ].asdouble ) ) << ' '
+                << ( ( iFlags & conditional_memval2 )   == 0 ? "*" : to_string( Params[ 12 ].asdouble ) ) << ' ';
+        }
+    }
+    if( fRandomDelay != 0.0 ) {
+        Output
+            << "randomdelay "
+            << fRandomDelay << ' ';
+    }
+    // footer
+    Output
+        << "endevent"
+        << "\n";
+}
 
 void TEvent::AddToQuery( TEvent *Event, TEvent *&Start ) {
 
@@ -822,75 +982,76 @@ event_manager::FindEvent( std::string const &Name ) {
 
 // legacy method, inserts specified event in the event query
 bool
-event_manager::AddToQuery( TEvent *Event, TDynamicObject *Owner ) {
+event_manager::AddToQuery( TEvent *Event, TDynamicObject const *Owner ) {
 
-    if( true == Event->bEnabled ) {
-        // jeśli może być dodany do kolejki (nie używany w skanowaniu)
-        if( !Event->iQueued ) // jeśli nie dodany jeszcze do kolejki
-        { // kolejka eventów jest posortowana względem (fStartTime)
-            Event->Activator = Owner;
-            if( ( Event->Type == tp_AddValues )
-             && ( Event->fDelay == 0.0 ) ) {
-                // eventy AddValues trzeba wykonywać natychmiastowo, inaczej kolejka może zgubić jakieś dodawanie
-                // Ra: kopiowanie wykonania tu jest bez sensu, lepiej by było wydzielić funkcję
-                // wykonującą eventy i ją wywołać
-                if( ( false == Event->m_ignored )
-                 && ( true == EventConditon( Event ) ) ) { // teraz mogą być warunki do tych eventów
+    if( false == Event->bEnabled ) { return false; }
+    if( Event->iQueued != 0 )      { return false; }
+    // jeśli może być dodany do kolejki (nie używany w skanowaniu)
+    // jeśli nie dodany jeszcze do kolejki
+        
+    // kolejka eventów jest posortowana względem (fStartTime)
+    Event->Activator = Owner;
+    if( ( Event->Type == tp_AddValues )
+     && ( Event->fDelay == 0.0 ) ) {
+        // eventy AddValues trzeba wykonywać natychmiastowo, inaczej kolejka może zgubić jakieś dodawanie
+        // Ra: kopiowanie wykonania tu jest bez sensu, lepiej by było wydzielić funkcję
+        // wykonującą eventy i ją wywołać
+        if( ( false == Event->m_ignored )
+         && ( true == EventConditon( Event ) ) ) { // teraz mogą być warunki do tych eventów
 
-                    Event->Params[ 5 ].asMemCell->UpdateValues(
-                        Event->Params[ 0 ].asText, Event->Params[ 1 ].asdouble,
-                        Event->Params[ 2 ].asdouble, Event->iFlags );
+            Event->Params[ 5 ].asMemCell->UpdateValues(
+                Event->Params[ 0 ].asText, Event->Params[ 1 ].asdouble,
+                Event->Params[ 2 ].asdouble, Event->iFlags );
 
-                    if( Event->Params[ 6 ].asTrack ) { // McZapkie-100302 - updatevalues oprocz zmiany wartosci robi putcommand dla
-                        // wszystkich 'dynamic' na danym torze
-                        for( auto dynamic : Event->Params[ 6 ].asTrack->Dynamics ) {
-                            Event->Params[ 5 ].asMemCell->PutCommand(
-                                dynamic->Mechanik,
-                                Event->Params[ 4 ].asLocation );
-                        }
-                        //if (DebugModeFlag)
-                        WriteLog(
-                            "EVENT EXECUTED" + ( Owner ? ( " by " + Owner->asName ) : "" ) + ": AddValues & Track command - ["
-                            + std::string{ Event->Params[ 0 ].asText } + "] ["
-                            + to_string( Event->Params[ 1 ].asdouble, 2 ) + "] ["
-                            + to_string( Event->Params[ 2 ].asdouble, 2 ) + " ]" );
-                    }
-                    //else if (DebugModeFlag)
-                    WriteLog(
-                        "EVENT EXECUTED" + ( Owner ? ( " by " + Owner->asName ) : "" ) + ": AddValues - ["
-                        + std::string( Event->Params[ 0 ].asText ) + "] ["
-                        + to_string( Event->Params[ 1 ].asdouble, 2 ) + "] ["
-                        + to_string( Event->Params[ 2 ].asdouble, 2 ) + "]" );
+            if( Event->Params[ 6 ].asTrack ) {
+                // McZapkie-100302 - updatevalues oprocz zmiany wartosci robi putcommand dla wszystkich 'dynamic' na danym torze
+                for( auto dynamic : Event->Params[ 6 ].asTrack->Dynamics ) {
+                    Event->Params[ 5 ].asMemCell->PutCommand(
+                        dynamic->Mechanik,
+                        Event->Params[ 4 ].asLocation );
                 }
-                // jeśli jest kolejny o takiej samej nazwie, to idzie do kolejki (and if there's no joint event it'll be set to null and processing will end here)
-                do {
-                    Event = Event->evJoined;
-                    // NOTE: we could've received a new event from joint event above, so we need to check conditions just in case and discard the bad events
-                    // TODO: refactor this arrangement, it's hardly optimal
-                } while( ( Event != nullptr )
-                    && ( ( false == Event->bEnabled )
-                      || ( Event->iQueued > 0 ) ) );
+                //if (DebugModeFlag)
+                WriteLog(
+                    "EVENT EXECUTED" + ( Owner ? ( " by " + Owner->asName ) : "" ) + ": AddValues & Track command - ["
+                    + std::string{ Event->Params[ 0 ].asText } + "] ["
+                    + to_string( Event->Params[ 1 ].asdouble, 2 ) + "] ["
+                    + to_string( Event->Params[ 2 ].asdouble, 2 ) + " ]" );
             }
-            if( ( Event != nullptr )
-             && ( false == Event->m_ignored ) ) {
-                // standardowe dodanie do kolejki
-                ++Event->iQueued; // zabezpieczenie przed podwójnym dodaniem do kolejki
-                WriteLog( "EVENT ADDED TO QUEUE" + ( Owner ? ( " by " + Owner->asName ) : "" ) + ": " + Event->asName );
-                Event->fStartTime = std::abs( Event->fDelay ) + Timer::GetTime(); // czas od uruchomienia scenerii
-                if( Event->fRandomDelay > 0.0 ) {
-                    // doliczenie losowego czasu opóźnienia
-                    Event->fStartTime += Event->fRandomDelay * Random( 10000 ) * 0.0001;
-                }
-                if( QueryRootEvent != nullptr ) {
-                    TEvent::AddToQuery( Event, QueryRootEvent );
-                }
-                else {
-                    QueryRootEvent = Event;
-                    QueryRootEvent->evNext = nullptr;
-                }
-            }
+            //else if (DebugModeFlag)
+            WriteLog(
+                "EVENT EXECUTED" + ( Owner ? ( " by " + Owner->asName ) : "" ) + ": AddValues - ["
+                + std::string( Event->Params[ 0 ].asText ) + "] ["
+                + to_string( Event->Params[ 1 ].asdouble, 2 ) + "] ["
+                + to_string( Event->Params[ 2 ].asdouble, 2 ) + "]" );
+        }
+        // jeśli jest kolejny o takiej samej nazwie, to idzie do kolejki (and if there's no joint event it'll be set to null and processing will end here)
+        do {
+            Event = Event->evJoined;
+            // NOTE: we could've received a new event from joint event above, so we need to check conditions just in case and discard the bad events
+            // TODO: refactor this arrangement, it's hardly optimal
+        } while( ( Event != nullptr )
+              && ( ( false == Event->bEnabled )
+                || ( Event->iQueued > 0 ) ) );
+    }
+    if( ( Event != nullptr )
+     && ( false == Event->m_ignored ) ) {
+        // standardowe dodanie do kolejki
+        ++Event->iQueued; // zabezpieczenie przed podwójnym dodaniem do kolejki
+        WriteLog( "EVENT ADDED TO QUEUE" + ( Owner ? ( " by " + Owner->asName ) : "" ) + ": " + Event->asName );
+        Event->fStartTime = std::abs( Event->fDelay ) + Timer::GetTime(); // czas od uruchomienia scenerii
+        if( Event->fRandomDelay > 0.0 ) {
+            // doliczenie losowego czasu opóźnienia
+            Event->fStartTime += Event->fRandomDelay * Random( 10000 ) * 0.0001;
+        }
+        if( QueryRootEvent != nullptr ) {
+            TEvent::AddToQuery( Event, QueryRootEvent );
+        }
+        else {
+            QueryRootEvent = Event;
+            QueryRootEvent->evNext = nullptr;
         }
     }
+
     return true;
 }
 
@@ -1002,6 +1163,10 @@ event_manager::CheckQuery() {
             case tp_Lights: {
                 if( m_workevent->Params[ 9 ].asModel ) {
                     for( i = 0; i < iMaxNumLights; ++i ) {
+                        if( m_workevent->Params[ i ].asdouble == -2.0 ) {
+                            // processed all supplied values, bail out
+                            break;
+                        }
                         if( m_workevent->Params[ i ].asdouble >= 0 ) {
                             // -1 zostawia bez zmiany
                             m_workevent->Params[ 9 ].asModel->LightSet(
@@ -1013,8 +1178,8 @@ event_manager::CheckQuery() {
                 break;
             }
             case tp_Visible: {
-                if( m_workevent->Params[ 9 ].asEditorNode )
-                    m_workevent->Params[ 9 ].asEditorNode->visible( m_workevent->Params[ 0 ].asInt > 0 );
+                if( m_workevent->Params[ 9 ].asSceneNode )
+                    m_workevent->Params[ 9 ].asSceneNode->visible( m_workevent->Params[ 0 ].asInt > 0 );
                 break;
             }
             case tp_Velocity: {
@@ -1022,8 +1187,12 @@ event_manager::CheckQuery() {
                 break;
             }
             case tp_Exit: {
-                MessageBox( 0, m_workevent->asNodeName.c_str(), " THE END ", MB_OK );
-                Global.iTextMode = -1; // wyłączenie takie samo jak sekwencja F10 -> Y
+                // wyłączenie takie samo jak sekwencja F10 -> Y
+                MessageBox(
+                    0,
+                    ExchangeCharInString( m_workevent->asNodeName, '_', ' ' ).c_str(),
+                    " THE END ",
+                    MB_OK );
                 return false;
             }
             case tp_Sound: {
@@ -1125,29 +1294,30 @@ event_manager::CheckQuery() {
                 Error("Event \"DynVel\" is obsolete");
                 break;
             case tp_Multiple: {
-                auto const bCondition = EventConditon(m_workevent);
-                if( ( bCondition )
-                 || ( m_workevent->iFlags & conditional_anyelse ) ) {
+                auto const condition { EventConditon( m_workevent ) };
+                if( ( true == condition )
+                 || ( true == m_workevent->m_conditionalelse ) ) {
                     // warunek spelniony albo było użyte else
                     WriteLog("Type: Multi-event");
-                    for (i = 0; i < 8; ++i) {
-                        // dodawane do kolejki w kolejności zapisania
-                        if( m_workevent->Params[ i ].asEvent ) {
-                            if( bCondition != ( ( ( m_workevent->iFlags & ( conditional_else << i ) ) != 0 ) ) ) {
-                                if( m_workevent->Params[ i ].asEvent != m_workevent )
-                                    AddToQuery( m_workevent->Params[ i ].asEvent, m_workevent->Activator ); // normalnie dodać
-                                else {
-                                    // jeśli ma być rekurencja to musi mieć sensowny okres powtarzania
-                                    if( m_workevent->fDelay >= 5.0 ) {
-                                        AddToQuery( m_workevent, m_workevent->Activator );
-                                    }
-                                }
+                    for( auto &childevent : m_workevent->m_children ) {
+                        auto *childeventdata { std::get<TEvent*>( childevent ) };
+                        if( childeventdata == nullptr ) { continue; }
+                        if( std::get<bool>( childevent ) != condition ) { continue; }
+
+                        if( childeventdata != m_workevent ) {
+                            // normalnie dodać
+                            AddToQuery( childeventdata, m_workevent->Activator );
+                        }
+                        else {
+                            // jeśli ma być rekurencja to musi mieć sensowny okres powtarzania
+                            if( m_workevent->fDelay >= 5.0 ) {
+                                AddToQuery( m_workevent, m_workevent->Activator );
                             }
                         }
                     }
                     if( Global.iMultiplayer ) {
                         // dajemy znać do serwera o wykonaniu
-                        if( ( m_workevent->iFlags & conditional_anyelse ) == 0 ) {
+                        if( false == m_workevent->m_conditionalelse ) {
                             // jednoznaczne tylko, gdy nie było else
                             if( m_workevent->Activator ) {
                                 multiplayer::WyslijEvent( m_workevent->asName, m_workevent->Activator->name() );
@@ -1404,7 +1574,6 @@ event_manager::InitEvents() {
             else {
                 ErrorLog( "Bad event: animation event \"" + event->asName + "\" cannot find model instance \"" + event->asNodeName + "\"" );
             }
-            event->asNodeName = "";
             break;
         }
         case tp_Lights: {
@@ -1414,12 +1583,11 @@ event_manager::InitEvents() {
                 event->Params[ 9 ].asModel = instance;
             else
                 ErrorLog( "Bad event: lights event \"" + event->asName + "\" cannot find model instance \"" + event->asNodeName + "\"" );
-            event->asNodeName = "";
             break;
         }
         case tp_Visible: {
             // ukrycie albo przywrócenie obiektu
-            editor::basic_node *node = simulation::Instances.find( event->asNodeName ); // najpierw model
+            scene::basic_node *node = simulation::Instances.find( event->asNodeName ); // najpierw model
             if( node == nullptr ) {
                 // albo tory?
                 node = simulation::Paths.find( event->asNodeName );
@@ -1429,12 +1597,11 @@ event_manager::InitEvents() {
                 node = simulation::Traction.find( event->asNodeName );
             }
             if( node != nullptr )
-                event->Params[ 9 ].asEditorNode = node;
+                event->Params[ 9 ].asSceneNode = node;
             else {
                 event->m_ignored = true;
                 ErrorLog( "Bad event: visibility event \"" + event->asName + "\" cannot find item \"" + event->asNodeName + "\"" );
             }
-            event->asNodeName = "";
             break;
         }
         case tp_Switch: {
@@ -1460,7 +1627,6 @@ event_manager::InitEvents() {
             else {
                 ErrorLog( "Bad event: switch event \"" + event->asName + "\" cannot find track \"" + event->asNodeName + "\"" );
             }
-            event->asNodeName = "";
             break;
         }
         case tp_Sound: {
@@ -1470,7 +1636,6 @@ event_manager::InitEvents() {
                 event->Params[ 9 ].tsTextSound = sound;
             else
                 ErrorLog( "Bad event: sound event \"" + event->asName + "\" cannot find static sound \"" + event->asNodeName + "\"" );
-            event->asNodeName = "";
             break;
         }
         case tp_TrackVel: {
@@ -1486,7 +1651,6 @@ event_manager::InitEvents() {
                     ErrorLog( "Bad event: track velocity event \"" + event->asName + "\" cannot find track \"" + event->asNodeName + "\"" );
                 }
             }
-            event->asNodeName = "";
             break;
         }
         case tp_DynVel: {
@@ -1500,41 +1664,31 @@ event_manager::InitEvents() {
                 else
                     ErrorLog( "Bad event: vehicle velocity event \"" + event->asName + "\" cannot find vehicle \"" + event->asNodeName + "\"" );
             }
-            event->asNodeName = "";
             break;
         }
         case tp_Multiple: {
-            std::string cellastext;
-            if( event->Params[ 9 ].asText != nullptr ) { // przepisanie nazwy do bufora
-                cellastext = event->Params[ 9 ].asText;
-                SafeDeleteArray( event->Params[ 9 ].asText );
-                event->Params[ 9 ].asPointer = nullptr; // zerowanie wskaźnika, aby wykryć brak obeiktu
-            }
-            if( event->iFlags & ( conditional_trackoccupied | conditional_trackfree ) ) {
-                // jeśli chodzi o zajetosc toru
-                event->Params[ 9 ].asTrack = simulation::Paths.find( cellastext );
-                if( event->Params[ 9 ].asTrack == nullptr ) {
-                    ErrorLog( "Bad event: multi-event \"" + event->asName + "\" cannot find track \"" + cellastext + "\"" );
-                    event->iFlags &= ~( conditional_trackoccupied | conditional_trackfree ); // zerowanie flag
-                }
-            }
-            else if( event->iFlags & ( conditional_memstring | conditional_memval1 | conditional_memval2 ) ) {
-                // jeśli chodzi o komorke pamieciową
-                event->Params[ 9 ].asMemCell = simulation::Memory.find( cellastext );
-                if( event->Params[ 9 ].asMemCell == nullptr ) {
-                    ErrorLog( "Bad event: multi-event \"" + event->asName + "\" cannot find memory cell \"" + cellastext + "\"" );
-                    event->iFlags &= ~( conditional_memstring | conditional_memval1 | conditional_memval2 );
-                }
-            }
-            for( int i = 0; i < 8; ++i ) {
-                if( event->Params[ i ].asText != nullptr ) {
-                    cellastext = event->Params[ i ].asText;
-                    SafeDeleteArray( event->Params[ i ].asText );
-                    event->Params[ i ].asEvent = FindEvent( cellastext );
-                    if( event->Params[ i ].asEvent == nullptr ) {
-                        // Ra: tylko w logu informacja o braku
-                        ErrorLog( "Bad event: multi-event \"" + event->asName + "\" cannot find event \"" + cellastext + "\"" );
+            if( false == event->asNodeName.empty() ) {
+                if( event->iFlags & ( conditional_trackoccupied | conditional_trackfree ) ) {
+                    // jeśli chodzi o zajetosc toru
+                    event->Params[ 9 ].asTrack = simulation::Paths.find( event->asNodeName );
+                    if( event->Params[ 9 ].asTrack == nullptr ) {
+                        ErrorLog( "Bad event: multi-event \"" + event->asName + "\" cannot find track \"" + event->asNodeName + "\"" );
+                        event->iFlags &= ~( conditional_trackoccupied | conditional_trackfree ); // zerowanie flag
                     }
+                }
+                else if( event->iFlags & ( conditional_memstring | conditional_memval1 | conditional_memval2 ) ) {
+                    // jeśli chodzi o komorke pamieciową
+                    event->Params[ 9 ].asMemCell = simulation::Memory.find( event->asNodeName );
+                    if( event->Params[ 9 ].asMemCell == nullptr ) {
+                        ErrorLog( "Bad event: multi-event \"" + event->asName + "\" cannot find memory cell \"" + event->asNodeName + "\"" );
+                        event->iFlags &= ~( conditional_memstring | conditional_memval1 | conditional_memval2 );
+                    }
+                }
+            }
+            for( auto &childevent : event->m_children ) {
+                std::get<TEvent *>( childevent ) = FindEvent( std::get<std::string>( childevent ) );
+                if( std::get<TEvent *>( childevent ) == nullptr ) {
+                    ErrorLog( "Bad event: multi-event \"" + event->asName + "\" cannot find event \"" + std::get<std::string>( childevent ) + "\"" );
                 }
             }
             break;
@@ -1548,7 +1702,6 @@ event_manager::InitEvents() {
                 else
                     ErrorLog( "Bad event: voltage event \"" + event->asName + "\" cannot find power source \"" + event->asNodeName + "\"" );
             }
-            event->asNodeName = "";
             break;
         }
         case tp_Message: {
@@ -1594,6 +1747,20 @@ event_manager::InitLaunchers() {
                 ErrorLog( "Bad scenario: event launcher \"" + launcher->name() + "\" cannot find event \"" + launcher->asEvent2Name + "\"" );
             }
         }
+    }
+}
+
+// sends basic content of the class in legacy (text) format to provided stream
+void
+event_manager::export_as_text( std::ostream &Output ) const {
+
+    Output << "// events\n";
+    for( auto const *event : m_events ) {
+        event->export_as_text( Output );
+    }
+    Output << "// event launchers\n";
+    for( auto const *launcher : m_launchers.sequence() ) {
+        launcher->export_as_text( Output );
     }
 }
 

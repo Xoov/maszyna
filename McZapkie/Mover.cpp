@@ -38,16 +38,6 @@ std::vector<std::string> const TMoverParameters::eimv_labels = {
     "Fful:"
 };
 
-inline long Trunc(float f)
-{
-    return (long)f;
-}
-
-inline long ROUND(float f)
-{
-    return Trunc(f + 0.5f);
-}
-
 inline double square(double val) // SQR() zle liczylo w current() ...
 {
     return val * val;
@@ -295,10 +285,10 @@ TMoverParameters::TMoverParameters(double VelInitial, std::string TypeNameInit,
                                    int Cab) ://: T_MoverParameters(VelInitial, TypeNameInit,
                                             //NameInit, LoadInitial, LoadTypeInitial, Cab)
 TypeName( TypeNameInit ),
+Name( NameInit ),
 ActiveCab( Cab ),
-LoadType( LoadTypeInitial ),
 Load( LoadInitial ),
-Name( NameInit )
+LoadType( LoadTypeInitial )
 {
     WriteLog(
         "------------------------------------------------------");
@@ -1579,9 +1569,10 @@ void TMoverParameters::WaterHeaterCheck( double const Timestep ) {
         WaterHeater.is_active = false;
     }
 
-    WaterHeater.is_damaged |= (
-        ( true == WaterHeater.is_active )
-     && ( false == WaterPump.is_active ) );
+    WaterHeater.is_damaged = (
+        ( true == WaterHeater.is_damaged )
+     || ( ( true == WaterHeater.is_active )
+       && ( false == WaterPump.is_active ) ) );
 }
 
 // fuel pump status update
@@ -1713,18 +1704,11 @@ bool TMoverParameters::IncMainCtrl(int CtrlSpeed)
 					// szybkie przejœcie na bezoporow¹
 					if( TrainType == dt_ET40 ) {
 						break; // this means ET40 won't react at all to fast acceleration command. should it issue just IncMainCtrl(1) instead?
-                                }
+                    }
 					while( ( RList[ MainCtrlPos ].R > 0.0 )
 						&& IncMainCtrl( 1 ) ) {
 						// all work is done in the loop header
 						;
-					}
-					// OK:=true ; {takie chamskie, potem poprawie} <-Ra: kto mia³ to poprawiæ i po co?
-					if( ActiveDir < 0 ) {
-						while( ( RList[ MainCtrlPos ].Bn > 1 )
-							&& IncMainCtrl( 1 ) ) {
-							--MainCtrlPos;
-						}
 					}
 					OK = false; // shouldn't this be part of the loop above?
 					// if (TrainType=dt_ET40)  then
@@ -1751,14 +1735,6 @@ bool TMoverParameters::IncMainCtrl(int CtrlSpeed)
                             }
 						}
 					}
-					if( ActiveDir < 0 ) {
-						if( ( TrainType != dt_PseudoDiesel )
-						 && ( RList[ MainCtrlPos ].Bn > 1 )	) {
-                            // blokada wejścia na równoległą podczas jazdy do tyłu
-							--MainCtrlPos;
-                            OK = false;
-                        }
-					}
                         //
                         // if (TrainType == "et40")
                         //  if (Abs(Im) > IminHi)
@@ -1767,15 +1743,14 @@ bool TMoverParameters::IncMainCtrl(int CtrlSpeed)
                         //    OK = false;
                         //   }
                         //}
-                                }
+                }
 
-				if( ( TrainType == dt_ET42 ) && ( true == DynamicBrakeFlag ) ) {
-					if( MainCtrlPos > 20 ) {
-						MainCtrlPos = 20;
+                if( ( TrainType == dt_ET42 ) && ( true == DynamicBrakeFlag ) ) {
+                    if( MainCtrlPos > 20 ) {
+                        MainCtrlPos = 20;
                         OK = false;
                     }
-				}
-                    // return OK;
+                }
                     break;
                 }
 
@@ -2865,7 +2840,6 @@ bool TMoverParameters::IncLocalBrakeLevel(int CtrlSpeed)
         while ((LocalBrakePos < LocalBrakePosNo) && (CtrlSpeed > 0))
         {
             LocalBrakePos++;
-//            LocalBrakePosA = static_cast<double>(LocalBrakePos) / LocalBrakePosNo; // temporary hack until i figure out how this element is supposed to work
             CtrlSpeed--;
         }
         IBL = true;
@@ -2889,7 +2863,6 @@ bool TMoverParameters::DecLocalBrakeLevel(int CtrlSpeed)
         while ((CtrlSpeed > 0) && (LocalBrakePos > 0))
         {
             LocalBrakePos--;
-//            LocalBrakePosA = static_cast<double>( LocalBrakePos ) / LocalBrakePosNo; // temporary hack until i figure out how this element is supposed to work
             CtrlSpeed--;
         }
         DBL = true;
@@ -2911,7 +2884,6 @@ bool TMoverParameters::IncLocalBrakeLevelFAST(void)
     if (LocalBrakePos < LocalBrakePosNo)
     {
         LocalBrakePos = LocalBrakePosNo;
-//        LocalBrakePosA = static_cast<double>( LocalBrakePos ) / LocalBrakePosNo; // temporary hack until i figure out how this element is supposed to work
         ILBLF = true;
     }
     else
@@ -2930,7 +2902,6 @@ bool TMoverParameters::DecLocalBrakeLevelFAST(void)
     if (LocalBrakePos > 0)
     {
         LocalBrakePos = 0;
-//        LocalBrakePosA = static_cast<double>( LocalBrakePos ) / LocalBrakePosNo; // temporary hack until i figure out how this element is supposed to work
         DLBLF = true;
     }
     else
@@ -3302,7 +3273,7 @@ void TMoverParameters::CompressorCheck(double dt)
                     CompressedVolume +=
                         CompressorSpeed
                         * ( 2.0 * MaxCompressor - Compressor ) / MaxCompressor
-                        * ( DElist[ MainCtrlPos ].RPM / DElist[ MainCtrlPosNo ].RPM )
+                        * ( ( 60.0 * std::abs( enrot ) ) / DElist[ MainCtrlPosNo ].RPM )
                         * dt;
                 }
                 else {
@@ -3467,7 +3438,7 @@ void TMoverParameters::CompressorCheck(double dt)
                 // the compressor is coupled with the diesel engine, engine revolutions affect the output
                 if( false == CompressorGovernorLock ) {
                     auto const enginefactor { (
-                        EngineType == DieselElectric ? ( DElist[ MainCtrlPos ].RPM / DElist[ MainCtrlPosNo ].RPM ) :
+                        EngineType == DieselElectric ? ( ( 60.0 * std::abs( enrot ) ) / DElist[ MainCtrlPosNo ].RPM ) :
                         EngineType == DieselEngine ? ( std::abs( enrot ) / nmax ) :
                         1.0 ) }; // shouldn't ever get here but, eh
                     CompressedVolume +=
@@ -4436,19 +4407,21 @@ double TMoverParameters::TractionForce( double dt ) {
     switch( EngineType ) {
         case DieselElectric: {
             if( ( true == Mains )
-                && ( true == FuelPump.is_active ) ) {
+             && ( true == FuelPump.is_active ) ) {
 
                 tmp = DElist[ MainCtrlPos ].RPM / 60.0;
 
                 if( ( true == Heating )
-                    && ( HeatingPower > 0 )
-                    && ( MainCtrlPosNo > MainCtrlPos ) ) {
-
-                    int i = MainCtrlPosNo;
-                    while( DElist[ i - 2 ].RPM / 60.0 > tmp ) {
-                        --i;
-                    }
-                    tmp = DElist[ i ].RPM / 60.0;
+                 && ( HeatingPower > 0 )
+                 && ( EngineHeatingRPM > 0 ) ) {
+                    // bump engine revolutions up if needed, when heating is on
+                    tmp =
+                        std::max(
+                            tmp,
+                            std::min(
+                                DElist[ MainCtrlPosNo ].RPM,
+                                EngineHeatingRPM )
+                                / 60.0 );
                 }
             }
             else {
@@ -4719,6 +4692,7 @@ double TMoverParameters::TractionForce( double dt ) {
                 if( ( true == Mains ) && ( MainCtrlPos > 0 ) ) {
                     Voltage = ( SST[ MainCtrlPos ].Umax * AnPos ) + ( SST[ MainCtrlPos ].Umin * ( 1.0 - AnPos ) );
                     // NOTE: very crude way to approximate power generated at current rpm instead of instant top output
+                    // NOTE, TODO: doesn't take into account potentially increased revolutions if heating is on, fix it
                     auto const rpmratio { 60.0 * enrot / DElist[ MainCtrlPos ].RPM };
                     tmp = rpmratio * ( SST[ MainCtrlPos ].Pmax * AnPos ) + ( SST[ MainCtrlPos ].Pmin * ( 1.0 - AnPos ) );
                     Ft = tmp * 1000.0 / ( abs( tmpV ) + 1.6 );
@@ -4735,6 +4709,7 @@ double TMoverParameters::TractionForce( double dt ) {
                 if( true == Heating ) { power -= HeatingPower; }
                 if( power < 0.0 ) { power = 0.0; }
                 // NOTE: very crude way to approximate power generated at current rpm instead of instant top output
+                // NOTE, TODO: doesn't take into account potentially increased revolutions if heating is on, fix it
                 auto const currentgenpower { (
                     DElist[ MainCtrlPos ].RPM > 0 ?
                         DElist[ MainCtrlPos ].GenPower * ( 60.0 * enrot / DElist[ MainCtrlPos ].RPM ) :
@@ -5984,16 +5959,19 @@ bool TMoverParameters::dizel_AutoGearCheck(void)
             if (MotorParam[ScndCtrlActualPos].AutoSwitch &&
                 (dizel_automaticgearstatus == 0)) // sprawdz czy zmienic biegi
             {
-                if ((Vel > MotorParam[ScndCtrlActualPos].mfi) &&
-                    (ScndCtrlActualPos < ScndCtrlPosNo))
-                {
-                    dizel_automaticgearstatus = 1;
-                    OK = true;
+                if( Vel > MotorParam[ ScndCtrlActualPos ].mfi ) {
+                    // shift up
+                    if( ScndCtrlActualPos < ScndCtrlPosNo ) {
+                        dizel_automaticgearstatus = 1;
+                        OK = true;
+                    }
                 }
-                else if ((Vel < MotorParam[ScndCtrlActualPos].fi) && (ScndCtrlActualPos > 0))
-                {
-                    dizel_automaticgearstatus = -1;
-                    OK = true;
+                else if( Vel < MotorParam[ ScndCtrlActualPos ].fi ) {
+                    // shift down
+                    if( ScndCtrlActualPos > 0 ) {
+                        dizel_automaticgearstatus = -1;
+                        OK = true;
+                    }
                 }
             }
         }
@@ -6464,7 +6442,7 @@ void TMoverParameters::dizel_Heat( double const dt ) {
         auto const zaluzje2 { ( dizel_heat.zaluzje2 ? 1 : 0 ) };
         // auxiliary water circuit heat transfer values
         auto const kf2 { kurek07 * ( ( dizel_heat.kw * ( 0.3 + 0.7 * zaluzje2 ) ) * dizel_heat.rpmw2 + ( dizel_heat.kv * ( 0.3 + 0.7 * zaluzje2 ) * Vel / 3.6 ) ) + 2 };
-        auto const dTs2 { ( ( dizel_heat.kfs * ( 0.3 ) * ( dizel_heat.To - dizel_heat.Tsr2 ) ) ) / ( gw2 * Cw ) };
+        auto const dTs2 { ( ( dizel_heat.kfo2 * ( dizel_heat.To - dizel_heat.Tsr2 ) ) ) / ( gw2 * Cw ) };
         // przy otwartym kurku B ma³y obieg jest dogrzewany przez du¿y - stosujemy przy korzystaniu z podgrzewacza oraz w zimie
         auto const Qch2 { -kf2 * ( dizel_heat.Tsr2 - dizel_heat.Te ) + ( 80 * ( true == WaterCircuitsLink ? 1 : 0 ) * ( dizel_heat.Twy - dizel_heat.Tsr2 ) ) };
         auto const dTch2 { Qch2 / ( gw2 * Cw ) };
@@ -6921,39 +6899,9 @@ bool startDLIST, startFFLIST, startWWLIST;
 bool startLIGHTSLIST;
 int LISTLINE;
 
-// *************************************************************************************************
-// Q: 20160717
-// *************************************************************************************************
-size_t Pos(std::string str_find, std::string in)
-{
-    size_t pos = in.find(str_find);
-    return (pos != std::string::npos ? pos+1 : 0);
-}
-/*
-// *************************************************************************************************
-// Q: 20160717
-// *************************************************************************************************
-bool issection(std::string const &name)
-{
-    sectionname = name;
-    if (xline.compare(0, name.size(), name) == 0)
-    {
-        lastsectionname = name;
-        return true;
-    }
-    else
-        return false;
-}
-*/
 bool issection( std::string const &Name, std::string const &Input ) {
 
     return ( Input.compare( 0, Name.size(), Name ) == 0 );
-}
-
-int MARKERROR(int code, std::string type, std::string msg)
-{
-    WriteLog(msg);
-    return code;
 }
 
 int s2NPW(std::string s)
@@ -8444,6 +8392,7 @@ void TMoverParameters::LoadFIZ_Engine( std::string const &Input ) {
                 ImaxHi = 2;
                 ImaxLo = 1;
             }
+            extract_value( EngineHeatingRPM, "HeatingRPM", Input, "" );
             break;
         }
         case ElectricInductionMotor: {
@@ -9172,9 +9121,7 @@ bool TMoverParameters::SendCtrlToNext( std::string const CtrlCommand, double con
 // jakiejś zmiany (np. IncMainCtrl) lepiej wywołać funkcję, czy od razu wysłać komendę.
 bool TMoverParameters::RunCommand( std::string Command, double CValue1, double CValue2, int const Couplertype )
 {
-    bool OK;
-    std::string testload;
-    OK = false;
+    bool OK { false };
 
 	if (Command == "MainCtrl")
 	{
@@ -9577,6 +9524,7 @@ bool TMoverParameters::RunCommand( std::string Command, double CValue1, double C
         else {
             OK = false;
         }
+        SendCtrlToNext( Command, CValue1, CValue2, Couplertype );
 	}
 	else if (Command == "Sandbox")
 	{
@@ -9598,29 +9546,37 @@ bool TMoverParameters::RunCommand( std::string Command, double CValue1, double C
 		OK = true; // true, gdy można usunąć komendę
 	}
 	/*naladunek/rozladunek*/
-	else if (Pos("Load=", Command) == 1)
+	else if ( issection( "Load=", Command ) )
 	{
 		OK = false; // będzie powtarzane aż się załaduje
-		if ((Vel == 0) && (MaxLoad > 0) &&
-			(Load < MaxLoad * (1.0 + OverLoadFactor))) // czy można ładowac?
-			if (Distance(Loc, CommandIn.Location, Dim, Dim) < 10) // ten peron/rampa
-			{
-				testload = ToLower(DUE(Command));
-				if (Pos(testload, LoadAccepted) > 0) // nazwa jest obecna w CHK
-					OK = LoadingDone(Min0R(CValue2, LoadSpeed), testload); // zmienia LoadStatus
-			}
+        if( ( Vel < 0.01 )
+         && ( MaxLoad > 0 )
+         && ( Load < MaxLoad * ( 1.0 + OverLoadFactor ) ) ) {
+            // czy można ładowac?
+            if( Distance( Loc, CommandIn.Location, Dim, Dim ) < 10 ) {
+                // ten peron/rampa
+                auto const testload { ToLower( extract_value( "Load", Command ) ) };
+                if( LoadAccepted.find( testload ) != std::string::npos ) // nazwa jest obecna w CHK
+                    OK = LoadingDone( Min0R( CValue2, LoadSpeed ), testload ); // zmienia LoadStatus
+            }
+        }
 		// if OK then LoadStatus:=0; //nie udalo sie w ogole albo juz skonczone
 	}
-	else if (Pos("UnLoad=", Command) == 1)
+    else if( issection( "UnLoad=", Command ) )
 	{
 		OK = false; // będzie powtarzane aż się rozładuje
-		if ((Vel == 0) && (Load > 0)) // czy jest co rozladowac?
-			if (Distance(Loc, CommandIn.Location, Dim, Dim) < 10) // ten peron
-			{
-				testload = DUE(Command); // zgodność nazwy ładunku z CHK
-				if (LoadType == testload) /*mozna to rozladowac*/
-					OK = LoadingDone(-Min0R(CValue2, LoadSpeed), testload);
-			}
+        if( ( Vel < 0.01 )
+         && ( Load > 0 ) ) {
+            // czy jest co rozladowac?
+            if( Distance( Loc, CommandIn.Location, Dim, Dim ) < 10 ) {
+                // ten peron
+                auto const testload { ToLower( extract_value( "UnLoad", Command ) ) }; // zgodność nazwy ładunku z CHK
+                if( LoadType == testload ) {
+                    /*mozna to rozladowac*/
+                    OK = LoadingDone( -Min0R( CValue2, LoadSpeed ), testload );
+                }
+            }
+        }
 		// if OK then LoadStatus:=0;
 	}
 	else if (Command == "SpeedCntrl")

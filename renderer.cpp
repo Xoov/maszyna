@@ -819,14 +819,20 @@ opengl_renderer::setup_pass( renderpass_config &Config, rendermode const Mode, f
             auto const zfar = Config.draw_range * Global.fDistanceFactor * Zfar;
             auto const znear = (
                 Znear > 0.f ?
-                    Znear * zfar :
-                    0.1f * Global.ZoomFactor );
+                Znear * zfar :
+                0.1f * Global.ZoomFactor );
             camera.projection() *=
                 glm::perspective(
                     glm::radians( Global.FieldOfView / Global.ZoomFactor ),
                     std::max( 1.f, (float)Global.iWindowWidth ) / std::max( 1.f, (float)Global.iWindowHeight ),
                     znear,
                     zfar );
+/*
+            m_sunandviewangle =
+                glm::dot(
+                    m_sunlight.direction,
+                    glm::vec3( 0.f, 0.f, -1.f ) * glm::mat3( viewmatrix ) );
+*/
             break;
         }
         case rendermode::shadows: {
@@ -1800,15 +1806,6 @@ opengl_renderer::Render( cell_sequence::iterator First, cell_sequence::iterator 
                 // tracks
                 // TODO: update after path node refactoring
                 Render( std::begin( cell->m_paths ), std::end( cell->m_paths ) );
-#ifdef EU07_SCENERY_EDITOR
-                // TODO: re-implement
-                // memcells
-                if( EditorModeFlag ) {
-                    for( auto const memcell : Groundsubcell->m_memcells ) {
-                        Render( memcell );
-                    }
-                }
-#endif
 #ifdef EU07_USE_DEBUG_CULLING
                 // debug
                 ::glLineWidth( 2.f );
@@ -1878,16 +1875,7 @@ opengl_renderer::Render( cell_sequence::iterator First, cell_sequence::iterator 
                     ::glColor3fv( glm::value_ptr( pick_color( m_picksceneryitems.size() + 1 ) ) );
                     Render( path );
                 }
-#ifdef EU07_SCENERY_EDITOR
-                // memcells
-                // TODO: re-implement
-                if( EditorModeFlag ) {
-                    for( auto const memcell : Groundsubcell->m_memcells ) {
-                        ::glColor3fv( glm::value_ptr( pick_color( m_picksceneryitems.size() + 1 ) ) );
-                        Render( memcell );
-                    }
-                }
-#endif
+
                 // post-render cleanup
                 ::glPopMatrix();
 
@@ -1918,6 +1906,17 @@ opengl_renderer::Render( cell_sequence::iterator First, cell_sequence::iterator 
                         Render( dynamic );
                     }
                 }
+                // memcells
+                if( ( EditorModeFlag )
+                 && ( DebugModeFlag ) ) {
+                    ::glPushAttrib( GL_ENABLE_BIT );
+                    ::glDisable( GL_TEXTURE_2D );
+                    ::glColor3f( 0.36f, 0.75f, 0.35f );
+                    for( auto const *memorycell : cell->m_memorycells ) {
+                        Render( memorycell );
+                    }
+                    ::glPopAttrib();
+                }
                 break;
             }
             case rendermode::pickscenery: {
@@ -1926,6 +1925,14 @@ opengl_renderer::Render( cell_sequence::iterator First, cell_sequence::iterator 
                 for( auto *instance : cell->m_instancesopaque ) {
                     ::glColor3fv( glm::value_ptr( pick_color( m_picksceneryitems.size() + 1 ) ) );
                     Render( instance );
+                }
+                // memcells
+                if( ( EditorModeFlag )
+                 && ( DebugModeFlag ) ) {
+                    for( auto const *memorycell : cell->m_memorycells ) {
+                        ::glColor3fv( glm::value_ptr( pick_color( m_picksceneryitems.size() + 1 ) ) );
+                        Render( memorycell );
+                    }
                 }
                 // vehicles aren't included in scenery picking for the time being
                 break;
@@ -2748,25 +2755,22 @@ opengl_renderer::Render( scene::basic_cell::path_sequence::const_iterator First,
 }
 
 void
-opengl_renderer::Render( TMemCell *Memcell ) {
+opengl_renderer::Render( TMemCell const *Memcell ) {
 
     ::glPushMatrix();
     auto const position = Memcell->location() - m_renderpass.camera.position();
     ::glTranslated( position.x, position.y + 0.5, position.z );
 
     switch( m_renderpass.draw_mode ) {
-        case rendermode::color: {
-            ::glPushAttrib( GL_ENABLE_BIT );
-            ::glDisable( GL_TEXTURE_2D );
-            ::glColor3f( 0.36f, 0.75f, 0.35f );
-
+        case rendermode::color:
+        case rendermode::shadows: {
             ::gluSphere( m_quadric, 0.35, 4, 2 );
-
-            ::glPopAttrib();
             break;
         }
-        case rendermode::shadows:
         case rendermode::pickscenery: {
+            // add the node to the pick list
+            m_picksceneryitems.emplace_back( Memcell );
+
             ::gluSphere( m_quadric, 0.35, 4, 2 );
             break;
         }
@@ -2965,7 +2969,7 @@ opengl_renderer::Render_Alpha( TTraction *Traction ) {
     ::glColor4fv(
         glm::value_ptr(
             glm::vec4{
-                Traction->wire_color(),
+                Traction->wire_color() /* * ( DebugModeFlag ? 1.f : clamp( m_sunandviewangle, 0.25f, 1.f ) ) */,
                 linealpha } ) );
     // render
     m_geometry.draw( Traction->m_geometry );
@@ -3422,7 +3426,7 @@ opengl_renderer::Update_Pick_Control() {
     return control;
 }
 
-editor::basic_node const *
+scene::basic_node const *
 opengl_renderer::Update_Pick_Node() {
 
 #ifdef EU07_USE_PICKING_FRAMEBUFFER
@@ -3457,7 +3461,7 @@ opengl_renderer::Update_Pick_Node() {
     unsigned char pickreadout[4];
     ::glReadPixels( pickbufferpos.x, pickbufferpos.y, 1, 1, GL_BGRA, GL_UNSIGNED_BYTE, pickreadout );
     auto const nodeindex = pick_index( glm::ivec3{ pickreadout[ 2 ], pickreadout[ 1 ], pickreadout[ 0 ] } );
-    editor::basic_node const *node { nullptr };
+    scene::basic_node const *node { nullptr };
     if( ( nodeindex > 0 )
      && ( nodeindex <= m_picksceneryitems.size() ) ) {
         node = m_picksceneryitems[ nodeindex - 1 ];
