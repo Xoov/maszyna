@@ -6357,6 +6357,7 @@ void TTrain::clear_cab_controls()
     // hunter-091012
     ggCabLightButton.Clear();
     ggCabLightDimButton.Clear();
+    ggBatteryButton.Clear();
     //-------
     ggFuseButton.Clear();
     ggConverterFuseButton.Clear();
@@ -6370,9 +6371,15 @@ void TTrain::clear_cab_controls()
     ggDoorLeftButton.Clear();
     ggDoorRightButton.Clear();
     ggTrainHeatingButton.Clear();
+    ggSignallingButton.Clear();
+    ggDoorSignallingButton.Clear();
     ggDepartureSignalButton.Clear();
     ggCompressorButton.Clear();
+    ggCompressorLocalButton.Clear();
     ggConverterButton.Clear();
+    ggConverterOffButton.Clear();
+    ggConverterLocalButton.Clear();
+    ggMainButton.Clear();
     ggPantFrontButton.Clear();
     ggPantRearButton.Clear();
     ggPantSelectedButton.Clear();
