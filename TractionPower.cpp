@@ -123,7 +123,7 @@ double TTractionPowerSource::CurrentGet(double res)
 	if ((res > 0) || ((res < 0) && (Recuperation || true)))
 		TotalAdmitance +=
             1.0 / res; // połączenie równoległe rezystancji jest równoważne sumie admitancji
-	float NomVolt = (TotalPreviousAdmitance < 0 ? NominalVoltage * 1.083 : NominalVoltage);
+	float NomVolt = (TotalPreviousAdmitance < 0 ? NominalVoltage : NominalVoltage);
 	TotalCurrent = (TotalPreviousAdmitance != 0.0) ?
 		NomVolt / (InternalRes + 1.0 / TotalPreviousAdmitance) :
 		0.0; // napięcie dzielone przez sumę rezystancji wewnętrznej i obciążenia
