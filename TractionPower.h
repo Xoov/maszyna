@@ -58,14 +58,6 @@ private:
     double FuseTimer = 0.0;
     int FuseCounter = 0;
 
-	double Overload1Factor = 1.5; // dopuszczalne przeciążenie nr 1
-	double Overload1Time = 120; // dopuszczalny czas przeciążenia nr 1
-	double Overload1MeanCurrent = 0; // średni prąd do sprawdzenia przeciążenia nr 1
-
-	double Overload2Factor = 2.0; // dopuszczalne przeciążenie nr 2
-	double Overload2Time = 10; // dopuszczalny czas przeciążenia nr 2
-	double Overload2MeanCurrent = 0; // średni prąd do sprawdzenia przeciążenia nr 2
-
 };
 
 
