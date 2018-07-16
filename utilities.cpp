@@ -25,10 +25,11 @@ Copyright (C) 2007-2014 Maciej Cierniak
 
 #include "utilities.h"
 #include "globals.h"
+#include "parser.h"
 
 bool DebugModeFlag = false;
 bool FreeFlyModeFlag = false;
-bool EditorModeFlag = true;
+bool EditorModeFlag = false;
 bool DebugCameraFlag = false;
 
 double Max0R(double x1, double x2)
@@ -256,18 +257,24 @@ int stol_def(const std::string &str, const int &DefaultValue) {
     return result;
 }
 
-std::string ToLower(std::string const &text)
-{
-	std::string lowercase( text );
-	std::transform(text.begin(), text.end(), lowercase.begin(), ::tolower);
+std::string ToLower(std::string const &text) {
+
+    auto lowercase { text };
+	std::transform(
+        std::begin( text ), std::end( text ),
+        std::begin( lowercase ),
+        []( unsigned char c ) { return std::tolower( c ); } );
 	return lowercase;
 }
 
-std::string ToUpper(std::string const &text)
-{
-	std::string uppercase( text );
-	std::transform(text.begin(), text.end(), uppercase.begin(), ::toupper);
-	return uppercase;
+std::string ToUpper(std::string const &text) {
+
+    auto uppercase { text };
+    std::transform(
+        std::begin( text ), std::end( text ),
+        std::begin( uppercase ),
+        []( unsigned char c ) { return std::toupper( c ); } );
+    return uppercase;
 }
 
 // replaces polish letters with basic ascii
@@ -386,4 +393,18 @@ substr_path( std::string const &Filename ) {
         Filename.rfind( '/' ) != std::string::npos ?
             Filename.substr( 0, Filename.rfind( '/' ) + 1 ) :
             "" );
+}
+
+// helper, restores content of a 3d vector from provided input stream
+// TODO: review and clean up the helper routines, there's likely some redundant ones
+glm::dvec3 LoadPoint( cParser &Input ) {
+    // pobranie współrzędnych punktu
+    Input.getTokens( 3 );
+    glm::dvec3 point;
+    Input
+        >> point.x
+        >> point.y
+        >> point.z;
+
+    return point;
 }

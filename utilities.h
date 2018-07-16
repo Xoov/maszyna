@@ -230,6 +230,13 @@ clamp_circular( Type_ Value, Type_ const Range = static_cast<Type_>(360) ) {
 
 template <typename Type_>
 Type_
+quantize( Type_ const Value, Type_ const Step ) {
+
+    return ( Step * std::round( Value / Step ) );
+}
+
+template <typename Type_>
+Type_
 min_speed( Type_ const Left, Type_ const Right ) {
 
     if( Left == Right ) { return Left; }
@@ -299,5 +306,7 @@ nearest_segment_point( VecType_ const &Segmentstart, VecType_ const &Segmentend,
     }
     return c1 / c2;
 }
+
+glm::dvec3 LoadPoint( class cParser &Input );
 
 //---------------------------------------------------------------------------
