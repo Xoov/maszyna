@@ -5103,7 +5103,7 @@ bool TTrain::Update( double const Deltatime )
 				&& (false == DynamicObject->Mechanik->AIControllFlag) // nie blokujemy AI
 				&& (Global.iFeedbackMode == 4)
 				&& (Global.fCalibrateIn[2][1] != 0.0)) {
-				auto const b = clamp<double>(
+				auto const b = clamp<int>(
 					Console::AnalogCalibrateGet(2) * mvOccupied->MainCtrlPosNo,
 					0.0,
 					mvOccupied->MainCtrlPosNo);
