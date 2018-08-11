@@ -241,7 +241,11 @@ private:
     int iRadioChannel = 1; // numer aktualnego kanału radiowego
     int iGuardRadio = 0; // numer kanału radiowego kierownika (0, gdy nie używa radia)
     sound_source tsGuardSignal { sound_placement::internal };
+	sound_source tsHelperSignal1 { sound_placement::internal }; //Pjoter hamuj
+	sound_source tsHelperSignal2 { sound_placement::internal }; //Kurła zdążę
+	sound_source tsHelperSignal3 { sound_placement::internal }; //a jednak nie
   public:
+	int HelperState = 0; //stan pomocnika maszynisty
     double AccPreferred = 0.0; // preferowane przyspieszenie (wg psychiki kierującego, zmniejszana przy wykryciu kolizji)
     double AccDesired = AccPreferred; // przyspieszenie, jakie ma utrzymywać (<0:nie przyspieszaj,<-0.1:hamuj)
     double VelDesired = 0.0; // predkość, z jaką ma jechać, wynikająca z analizy tableki; <=VelSignal

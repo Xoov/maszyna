@@ -1618,6 +1618,35 @@ TController::TController(bool AI, TDynamicObject *NewControll, bool InitPsyche, 
 #endif
         LogFile.flush();
     }
+	
+	auto lookup =
+		FileExists(
+	{ "[1007]AI_pomocnik1" },
+	{ ".ogg", ".flac", ".wav" });
+	if (false == lookup.first.empty()) {
+		//  wczytanie dźwięku pomocnika1
+		tsHelperSignal1 = sound_source(sound_placement::internal, 2*EU07_SOUND_CABCONTROLSCUTOFFRANGE).deserialize(lookup.first + lookup.second, sound_type::single);
+		tsHelperSignal1.offset(glm::vec3());
+	}
+	lookup = FileExists(
+	{ "[1007]AI_pomocnik2" },
+	{ ".ogg", ".flac", ".wav" });
+	if (false == lookup.first.empty()) {
+		//  wczytanie dźwięku pomocnika1
+		tsHelperSignal2 = sound_source(sound_placement::internal, 2 * EU07_SOUND_CABCONTROLSCUTOFFRANGE).deserialize(lookup.first + lookup.second, sound_type::single);
+		tsHelperSignal2.offset(glm::vec3());
+	}
+	lookup = FileExists(
+	{ "[1007]AI_pomocnik3" },
+	{ ".ogg", ".flac", ".wav" });
+	if (false == lookup.first.empty()) {
+		//  wczytanie dźwięku pomocnika1
+		tsHelperSignal3 = sound_source(sound_placement::internal, 2 * EU07_SOUND_CABCONTROLSCUTOFFRANGE).deserialize(lookup.first + lookup.second, sound_type::single);
+		tsHelperSignal3.offset(glm::vec3());
+	}
+
+
+
 };
 
 void TController::CloseLog()
@@ -5056,7 +5085,30 @@ TController::UpdateSituation(double dt) {
 
             // last step sanity check, until the whole calculation is straightened out
             AccDesired = std::min( AccDesired, AccPreferred );
-            AccDesired = clamp( AccDesired, -0.9, 0.9 );
+            AccDesired = clamp( AccDesired, -1.9, 0.9 );
+
+			if ((-AccDesired > fBrake_a0[0] + 8 * fBrake_a1[0]) && (HelperState == 0))
+			{
+				HelperState = 1;
+				tsHelperSignal1.owner(pVehicle);
+				tsHelperSignal1.play();
+			}
+			if ((-AccDesired > fBrake_a0[0] + 12 * fBrake_a1[0]) && (HelperState == 1))
+			{
+				HelperState = 2;
+				tsHelperSignal2.owner(pVehicle);
+				tsHelperSignal2.play();
+			}
+			if ((-AccDesired > 0) && (HelperState == 2) && (-fProximityDist > 5))
+			{
+				HelperState = 3;
+				tsHelperSignal3.owner(pVehicle);
+				tsHelperSignal3.play();
+			}
+			if ((-AccDesired < fBrake_a0[0] + 2 * fBrake_a1[0]) && (HelperState > 0) && (vel>1))
+			{
+				HelperState = 0;
+			}
 
             if (AIControllFlag) {
                 // część wykonawcza tylko dla AI, dla człowieka jedynie napisy

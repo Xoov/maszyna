@@ -587,6 +587,7 @@ ui_layer::update() {
                     uitextline4 +=
                         "Driver: Vd=" + to_string( vehicle->Mechanik->VelDesired, 0 )
                         + " Ad=" + to_string( vehicle->Mechanik->AccDesired, 2 )
+						+ " HS=" + to_string( vehicle->Mechanik->HelperState, 0)
                         + " Ah=" + to_string( vehicle->Mechanik->fAccThreshold, 2 )
                         + "@" + to_string( vehicle->Mechanik->fBrake_a0[ 0 ], 2 )
                         + "+" + to_string( vehicle->Mechanik->fBrake_a1[ 0 ], 2 )
