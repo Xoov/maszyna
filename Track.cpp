@@ -17,6 +17,11 @@ http://mozilla.org/MPL/2.0/.
 
 #include "simulation.h"
 #include "globals.h"
+#include "event.h"
+#include "messaging.h"
+#include "dynobj.h"
+#include "animmodel.h"
+#include "track.h"
 #include "timer.h"
 #include "logs.h"
 #include "renderer.h"
@@ -1404,7 +1409,10 @@ void TTrack::create_geometry( gfx::geometrybank_handle const &Bank ) {
         case tt_Switch: // dla zwrotnicy dwa razy szyny
             if( m_material1 || m_material2 ) {
                 // iglice liczone tylko dla zwrotnic
-                gfx::basic_vertex rpts3[24], rpts4[24];
+                gfx::basic_vertex
+                    rpts3[24],
+                    rpts4[24];
+                glm::vec3 const flipxvalue { -1, 1, 1 };
                 for( int i = 0; i < 12; ++i ) {
 
                     rpts3[ i ] = {
@@ -1423,17 +1431,17 @@ void TTrack::create_geometry( gfx::geometrybank_handle const &Bank ) {
                         { ( -fHTW - iglica[ i ].position.x ) * cos1 + iglica[ i ].position.y * sin1,
                          -( -fHTW - iglica[ i ].position.x ) * sin1 + iglica[ i ].position.y * cos1,
                          0.f},
-                         {iglica[ i ].normal},
+                         {iglica[ i ].normal * flipxvalue},
                          {iglica[ i ].texture.x, 0.f} };
                     rpts4[ 23 - i ] = {
                         { ( -fHTW2 - szyna[ i ].position.x ) * cos2 + szyna[ i ].position.y * sin2,
                          -( -fHTW2 - szyna[ i ].position.x ) * sin2 + iglica[ i ].position.y * cos2,
                          0.f},
-                         {szyna[ i ].normal},
+                         {szyna[ i ].normal * flipxvalue},
                          {szyna[ i ].texture.x, 0.f} };
                 }
                 // TODO, TBD: change all track geometry to triangles, to allow packing data in less, larger buffers
-                auto const bladelength { 2 * Global.SplineFidelity };
+                auto const bladelength { static_cast<int>( std::ceil( SwitchExtension->Segments[ 0 ]->RaSegCount() * 0.65 ) ) };
                 if (SwitchExtension->RightSwitch)
                 { // nowa wersja z SPKS, ale odwrotnie lewa/prawa
                     gfx::vertex_array vertices;
@@ -2367,18 +2375,18 @@ int TTrack::CrossSegment(int from, int into)
     switch (into)
     {
     case 0: // stop
-//        WriteLog( "Stopping in P" + to_string( from + 1 ) + " on " + pMyNode->asName );
+//        WriteLog( "Stopping in P" + to_string( from + 1 ) + " on " + name() );
         break;
     case 1: // left
-//        WriteLog( "Turning left from P" + to_string( from + 1 ) + " on " + pMyNode->asName );
+//        WriteLog( "Turning left from P" + to_string( from + 1 ) + " on " + name() );
         i = (SwitchExtension->iRoads == 4) ? iLewo4[from] : iLewo3[from];
         break;
     case 2: // right
-//        WriteLog( "Turning right from P" + to_string( from + 1 ) + " on " + pMyNode->asName );
+//        WriteLog( "Turning right from P" + to_string( from + 1 ) + " on " + name() );
         i = (SwitchExtension->iRoads == 4) ? iPrawo4[from] : iPrawo3[from];
         break;
     case 3: // stright
-//        WriteLog( "Going straight from P" + to_string( from + 1 ) + " on " + pMyNode->asName );
+//        WriteLog( "Going straight from P" + to_string( from + 1 ) + " on " + name() );
         i = (SwitchExtension->iRoads == 4) ? iProsto4[from] : iProsto3[from];
         break;
     }
@@ -2459,6 +2467,7 @@ TTrack * TTrack::RaAnimate()
             gfx::basic_vertex
                 rpts3[ 24 ],
                 rpts4[ 24 ];
+            glm::vec3 const flipxvalue { -1, 1, 1 };
             for (int i = 0; i < 12; ++i) {
 
                 rpts3[ i ] = {
@@ -2477,19 +2486,18 @@ TTrack * TTrack::RaAnimate()
                     {+( -fHTW - iglica[ i ].position.x ) * cos1 + iglica[ i ].position.y * sin1,
                      -( -fHTW - iglica[ i ].position.x ) * sin1 + iglica[ i ].position.y * cos1,
                       0.f},
-                      {iglica[ i ].normal},
+                      {iglica[ i ].normal * flipxvalue},
                       {iglica[ i ].texture.x, 0.f} };
                 rpts4[ 23 - i ] = {
                     { ( -fHTW2 - szyna[ i ].position.x ) * cos2 + szyna[ i ].position.y * sin2,
                      -( -fHTW2 - szyna[ i ].position.x ) * sin2 + iglica[ i ].position.y * cos2,
                      0.f},
-                     {szyna[ i ].normal},
+                     {szyna[ i ].normal * flipxvalue},
                      {szyna[ i ].texture.x, 0.f} };
             }
 
             gfx::vertex_array vertices;
-
-            auto const bladelength { 2 * Global.SplineFidelity };
+            auto const bladelength { static_cast<int>( std::ceil( SwitchExtension->Segments[ 0 ]->RaSegCount() * 0.65 ) ) };
             if (SwitchExtension->RightSwitch)
             { // nowa wersja z SPKS, ale odwrotnie lewa/prawa
                 if( m_material1 ) {

@@ -12,15 +12,15 @@ http://mozilla.org/MPL/2.0/.
 #include "renderer.h"
 #include "color.h"
 #include "globals.h"
+#include "camera.h"
 #include "timer.h"
 #include "simulation.h"
 #include "simulationtime.h"
-#include "world.h"
 #include "train.h"
 #include "dynobj.h"
 #include "animmodel.h"
 #include "traction.h"
-#include "uilayer.h"
+#include "application.h"
 #include "logs.h"
 #include "utilities.h"
 
@@ -128,7 +128,7 @@ opengl_renderer::Init( GLFWwindow *Window ) {
             std::vector<GLint>{ m_diffusetextureunit } :
             std::vector<GLint>{ m_normaltextureunit, m_diffusetextureunit } );
     m_textures.assign_units( m_helpertextureunit, m_shadowtextureunit, m_normaltextureunit, m_diffusetextureunit ); // TODO: add reflections unit
-    UILayer.set_unit( m_diffusetextureunit );
+    ui_layer::set_unit( m_diffusetextureunit );
     select_unit( m_diffusetextureunit );
 
     ::glDepthFunc( GL_LEQUAL );
@@ -397,7 +397,7 @@ opengl_renderer::Render() {
     Timer::subsystem.gfx_total.start(); // note: gfx_total is actually frame total, clean this up
     Timer::subsystem.gfx_color.start();
     // fetch simulation data
-    if( World.InitPerformed() ) {
+    if( simulation::is_ready ) {
         m_sunlight = Global.DayLight;
         // quantize sun angle to reduce shadow crawl
         auto const quantizationstep { 0.004f };
@@ -453,7 +453,7 @@ opengl_renderer::Render_pass( rendermode const Mode ) {
 
             if( ( true == Global.RenderShadows )
              && ( false == Global.bWireFrame )
-             && ( true == World.InitPerformed() )
+             && ( true == simulation::is_ready )
              && ( m_shadowcolor != colors::white ) ) {
 
                 // run shadowmaps pass before color
@@ -492,7 +492,7 @@ opengl_renderer::Render_pass( rendermode const Mode ) {
             }
 
             if( ( true == m_environmentcubetexturesupport )
-             && ( true == World.InitPerformed() ) ) {
+             && ( true == simulation::is_ready ) ) {
                 // potentially update environmental cube map
                 if( true == Render_reflections() ) {
                     setup_pass( m_renderpass, Mode ); // restore draw mode. TBD, TODO: render mode stack
@@ -501,8 +501,8 @@ opengl_renderer::Render_pass( rendermode const Mode ) {
 
             ::glViewport( 0, 0, Global.iWindowWidth, Global.iWindowHeight );
 
-            if( World.InitPerformed() ) {
-                auto const skydomecolour = World.Environment.m_skydome.GetAverageColor();
+            if( simulation::is_ready ) {
+                auto const skydomecolour = simulation::Environment.m_skydome.GetAverageColor();
                 ::glClearColor( skydomecolour.x, skydomecolour.y, skydomecolour.z, 0.f ); // kolor nieba
             }
             else {
@@ -510,13 +510,13 @@ opengl_renderer::Render_pass( rendermode const Mode ) {
             }
             ::glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
 
-            if( World.InitPerformed() ) {
+            if( simulation::is_ready ) {
                 // setup
                 setup_matrices();
                 // render
                 setup_drawing( true );
                 setup_units( true, false, false );
-                Render( &World.Environment );
+                Render( &simulation::Environment );
                 // opaque parts...
                 setup_drawing( false );
                 setup_units( true, true, true );
@@ -544,7 +544,7 @@ opengl_renderer::Render_pass( rendermode const Mode ) {
                     setup_shadow_map( m_cabshadowtexture, m_cabshadowtexturematrix );
                     // cache shadow colour in case we need to account for cab light
                     auto const shadowcolor { m_shadowcolor };
-                    auto const *vehicle{ World.Train->Dynamic() };
+                    auto const *vehicle{ simulation::Train->Dynamic() };
                     if( vehicle->InteriorLightLevel > 0.f ) {
                         setup_shadow_color( glm::min( colors::white, shadowcolor + glm::vec4( vehicle->InteriorLight * vehicle->InteriorLightLevel, 1.f ) ) );
                     }
@@ -565,7 +565,7 @@ opengl_renderer::Render_pass( rendermode const Mode ) {
                     setup_shadow_map( m_cabshadowtexture, m_cabshadowtexturematrix );
                     // cache shadow colour in case we need to account for cab light
                     auto const shadowcolor{ m_shadowcolor };
-                    auto const *vehicle{ World.Train->Dynamic() };
+                    auto const *vehicle{ simulation::Train->Dynamic() };
                     if( vehicle->InteriorLightLevel > 0.f ) {
                         setup_shadow_color( glm::min( colors::white, shadowcolor + glm::vec4( vehicle->InteriorLight * vehicle->InteriorLightLevel, 1.f ) ) );
                     }
@@ -584,13 +584,13 @@ opengl_renderer::Render_pass( rendermode const Mode ) {
                     ::glMatrixMode( GL_MODELVIEW );
                 }
             }
-            UILayer.render();
+            Application.render_ui();
             break;
         }
 
         case rendermode::shadows: {
 
-            if( World.InitPerformed() ) {
+            if( simulation::is_ready ) {
                 // setup
                 ::glEnable( GL_POLYGON_OFFSET_FILL ); // alleviate depth-fighting
                 ::glPolygonOffset( 1.f, 1.f );
@@ -631,7 +631,7 @@ opengl_renderer::Render_pass( rendermode const Mode ) {
 
         case rendermode::cabshadows: {
 
-            if( ( World.InitPerformed() )
+            if( ( simulation::is_ready )
              && ( false == FreeFlyModeFlag ) ) {
                 // setup
                 ::glEnable( GL_POLYGON_OFFSET_FILL ); // alleviate depth-fighting
@@ -659,8 +659,8 @@ opengl_renderer::Render_pass( rendermode const Mode ) {
 #else
                 setup_units( false, false, false );
 #endif
-                Render_cab( World.Train->Dynamic(), false );
-                Render_cab( World.Train->Dynamic(), true );
+                Render_cab( simulation::Train->Dynamic(), false );
+                Render_cab( simulation::Train->Dynamic(), true );
                 m_cabshadowpass = m_renderpass;
 
                 // post-render restore
@@ -678,7 +678,7 @@ opengl_renderer::Render_pass( rendermode const Mode ) {
             ::glClearColor( 0.f, 0.f, 0.f, 1.f );
             ::glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
 
-            if( World.InitPerformed() ) {
+            if( simulation::is_ready ) {
 
                 ::glColorMask( GL_TRUE, GL_TRUE, GL_TRUE, GL_FALSE );
                 // setup
@@ -686,7 +686,7 @@ opengl_renderer::Render_pass( rendermode const Mode ) {
                 // render
                 setup_drawing( true );
                 setup_units( true, false, false );
-                Render( &World.Environment );
+                Render( &simulation::Environment );
                 // opaque parts...
                 setup_drawing( false );
                 setup_units( true, true, true );
@@ -708,7 +708,7 @@ opengl_renderer::Render_pass( rendermode const Mode ) {
         }
 
         case rendermode::pickcontrols: {
-            if( World.InitPerformed() ) {
+            if( simulation::is_ready ) {
                 // setup
 #ifdef EU07_USE_PICKING_FRAMEBUFFER
                 ::glViewport( 0, 0, EU07_PICKBUFFERSIZE, EU07_PICKBUFFERSIZE );
@@ -723,14 +723,14 @@ opengl_renderer::Render_pass( rendermode const Mode ) {
                 setup_drawing( false );
                 setup_units( false, false, false );
                 // cab render skips translucent parts, so we can do it here
-                if( World.Train != nullptr ) { Render_cab( World.Train->Dynamic() ); }
+                if( simulation::Train != nullptr ) { Render_cab( simulation::Train->Dynamic() ); }
                 // post-render cleanup
             }
             break;
         }
 
         case rendermode::pickscenery: {
-            if( World.InitPerformed() ) {
+            if( simulation::is_ready ) {
                 // setup
                 m_picksceneryitems.clear();
 #ifdef EU07_USE_PICKING_FRAMEBUFFER
@@ -789,12 +789,12 @@ opengl_renderer::setup_pass( renderpass_config &Config, rendermode const Mode, f
 
     Config.draw_mode = Mode;
 
-    if( false == World.InitPerformed() ) { return; }
+    if( false == simulation::is_ready ) { return; }
     // setup draw range
     switch( Mode ) {
         case rendermode::color:        { Config.draw_range = Global.BaseDrawRange; break; }
         case rendermode::shadows:      { Config.draw_range = Global.BaseDrawRange * 0.5f; break; }
-        case rendermode::cabshadows:   { Config.draw_range = ( Global.pWorld->train()->Dynamic()->MoverParameters->ActiveCab != 0 ? 10.f : 20.f ); break; }
+        case rendermode::cabshadows:   { Config.draw_range = ( simulation::Train->Occupied()->ActiveCab != 0 ? 10.f : 20.f ); break; }
         case rendermode::reflections:  { Config.draw_range = Global.BaseDrawRange; break; }
         case rendermode::pickcontrols: { Config.draw_range = 50.f; break; }
         case rendermode::pickscenery:  { Config.draw_range = Global.BaseDrawRange * 0.5f; break; }
@@ -810,12 +810,12 @@ opengl_renderer::setup_pass( renderpass_config &Config, rendermode const Mode, f
         case rendermode::color: {
             // modelview
             if( ( false == DebugCameraFlag ) || ( true == Ignoredebug ) ) {
-                camera.position() = Global.pCameraPosition;
-                World.Camera.SetMatrix( viewmatrix );
+                camera.position() = Global.pCamera.Pos;
+                Global.pCamera.SetMatrix( viewmatrix );
             }
             else {
-                camera.position() = Global.DebugCameraPosition;
-                World.DebugCamera.SetMatrix( viewmatrix );
+                camera.position() = Global.pDebugCamera.Pos;
+                Global.pDebugCamera.SetMatrix( viewmatrix );
             }
             // projection
             auto const zfar = Config.draw_range * Global.fDistanceFactor * Zfar;
@@ -921,10 +921,10 @@ opengl_renderer::setup_pass( renderpass_config &Config, rendermode const Mode, f
                               m_sunlight.direction.x,
                     std::min( m_sunlight.direction.y, -0.2f ),
                               m_sunlight.direction.z } );
-            camera.position() = Global.pCameraPosition - glm::dvec3 { lightvector };
+            camera.position() = Global.pCamera.Pos - glm::dvec3 { lightvector };
             viewmatrix *= glm::lookAt(
                 camera.position(),
-                glm::dvec3 { Global.pCameraPosition },
+                glm::dvec3 { Global.pCamera.Pos },
                 glm::dvec3 { 0.f, 1.f, 0.f } );
             // projection
             auto const maphalfsize { Config.draw_range * 0.5f };
@@ -947,8 +947,8 @@ opengl_renderer::setup_pass( renderpass_config &Config, rendermode const Mode, f
             // modelview
             camera.position() = (
                 ( ( true == DebugCameraFlag ) && ( false == Ignoredebug ) ) ?
-                    Global.DebugCameraPosition :
-                    Global.pCameraPosition );
+                    Global.pDebugCamera.Pos :
+                    Global.pCamera.Pos );
             glm::dvec3 const cubefacetargetvectors[ 6 ] = { {  1.0,  0.0,  0.0 }, { -1.0,  0.0,  0.0 }, {  0.0,  1.0,  0.0 }, {  0.0, -1.0,  0.0 }, {  0.0,  0.0,  1.0 }, {  0.0,  0.0, -1.0 } };
             glm::dvec3 const cubefaceupvectors[ 6 ] =     { {  0.0, -1.0,  0.0 }, {  0.0, -1.0,  0.0 }, {  0.0,  0.0,  1.0 }, {  0.0,  0.0, -1.0 }, {  0.0, -1.0,  0.0 }, {  0.0, -1.0,  0.0 } };
             auto const cubefaceindex = m_environmentcubetextureface - GL_TEXTURE_CUBE_MAP_POSITIVE_X;
@@ -971,8 +971,8 @@ opengl_renderer::setup_pass( renderpass_config &Config, rendermode const Mode, f
         case rendermode::pickscenery: {
             // TODO: scissor test for pick modes
             // modelview
-            camera.position() = Global.pCameraPosition;
-            World.Camera.SetMatrix( viewmatrix );
+            camera.position() = Global.pCamera.Pos;
+            Global.pCamera.SetMatrix( viewmatrix );
             // projection
             camera.projection() *=
                 glm::perspective(
@@ -1670,7 +1670,7 @@ opengl_renderer::Render( scene::basic_region *Region ) {
             Update_Lights( simulation::Lights );
 
             Render( std::begin( m_sectionqueue ), std::end( m_sectionqueue ) );
-            if( EditorModeFlag && FreeFlyModeFlag ) {
+            if( EditorModeFlag ) {
                 // when editor mode is active calculate world position of the cursor
                 // at this stage the z-buffer is filled with only ground geometry
                 Update_Mouse_Position();
@@ -1997,7 +1997,7 @@ opengl_renderer::Render( scene::shape_node const &Shape, bool const Ignorerange 
         switch( m_renderpass.draw_mode ) {
             case rendermode::shadows: {
                 // 'camera' for the light pass is the light source, but we need to draw what the 'real' camera sees
-                distancesquared = Math3D::SquareMagnitude( ( data.area.center - Global.pCameraPosition ) / Global.ZoomFactor ) / Global.fDistanceFactor;
+                distancesquared = Math3D::SquareMagnitude( ( data.area.center - Global.pCamera.Pos ) / Global.ZoomFactor ) / Global.fDistanceFactor;
                 break;
             }
             default: {
@@ -2051,7 +2051,7 @@ opengl_renderer::Render( TAnimModel *Instance ) {
     switch( m_renderpass.draw_mode ) {
         case rendermode::shadows: {
             // 'camera' for the light pass is the light source, but we need to draw what the 'real' camera sees
-            distancesquared = Math3D::SquareMagnitude( ( Instance->location() - Global.pCameraPosition ) / Global.ZoomFactor ) / Global.fDistanceFactor;
+            distancesquared = Math3D::SquareMagnitude( ( Instance->location() - Global.pCamera.Pos ) / Global.ZoomFactor ) / Global.fDistanceFactor;
             break;
         }
         default: {
@@ -2099,13 +2099,13 @@ opengl_renderer::Render( TDynamicObject *Dynamic ) {
     ++m_debugstats.dynamics;
 
     // setup
-    TSubModel::iInstance = ( size_t )Dynamic; //żeby nie robić cudzych animacji
+    TSubModel::iInstance = reinterpret_cast<std::uintptr_t>( Dynamic ); //żeby nie robić cudzych animacji
     glm::dvec3 const originoffset = Dynamic->vPosition - m_renderpass.camera.position();
     // lod visibility ranges are defined for base (x 1.0) viewing distance. for render we adjust them for actual range multiplier and zoom
     float squaredistance;
     switch( m_renderpass.draw_mode ) {
         case rendermode::shadows: {
-            squaredistance = glm::length2( glm::vec3{ glm::dvec3{ Dynamic->vPosition - Global.pCameraPosition } } / Global.ZoomFactor ) / Global.fDistanceFactor;
+            squaredistance = glm::length2( glm::vec3{ glm::dvec3{ Dynamic->vPosition - Global.pCamera.Pos } } / Global.ZoomFactor ) / Global.fDistanceFactor;
             break;
         }
         default: {
@@ -2201,7 +2201,7 @@ opengl_renderer::Render_cab( TDynamicObject const *Dynamic, bool const Alpha ) {
         return false;
     }
 
-    TSubModel::iInstance = reinterpret_cast<std::size_t>( Dynamic );
+    TSubModel::iInstance = reinterpret_cast<std::uintptr_t>( Dynamic );
 
     if( ( true == FreeFlyModeFlag )
      || ( false == Dynamic->bDisplayCab )
@@ -2901,7 +2901,7 @@ opengl_renderer::Render_Alpha( TAnimModel *Instance ) {
     switch( m_renderpass.draw_mode ) {
         case rendermode::shadows: {
             // 'camera' for the light pass is the light source, but we need to draw what the 'real' camera sees
-            distancesquared = Math3D::SquareMagnitude( ( Instance->location() - Global.pCameraPosition ) / Global.ZoomFactor ) / Global.fDistanceFactor;
+            distancesquared = Math3D::SquareMagnitude( ( Instance->location() - Global.pCamera.Pos ) / Global.ZoomFactor ) / Global.fDistanceFactor;
             break;
         }
         default: {
@@ -2933,7 +2933,7 @@ opengl_renderer::Render_Alpha( TTraction *Traction ) {
     switch( m_renderpass.draw_mode ) {
         case rendermode::shadows: {
             // 'camera' for the light pass is the light source, but we need to draw what the 'real' camera sees
-            distancesquared = Math3D::SquareMagnitude( ( Traction->location() - Global.pCameraPosition ) / Global.ZoomFactor ) / Global.fDistanceFactor;
+            distancesquared = Math3D::SquareMagnitude( ( Traction->location() - Global.pCamera.Pos ) / Global.ZoomFactor ) / Global.fDistanceFactor;
             break;
         }
         default: {
@@ -2994,7 +2994,7 @@ opengl_renderer::Render_Alpha( scene::lines_node const &Lines ) {
     switch( m_renderpass.draw_mode ) {
         case rendermode::shadows: {
             // 'camera' for the light pass is the light source, but we need to draw what the 'real' camera sees
-            distancesquared = Math3D::SquareMagnitude( ( data.area.center - Global.pCameraPosition ) / Global.ZoomFactor ) / Global.fDistanceFactor;
+            distancesquared = Math3D::SquareMagnitude( ( data.area.center - Global.pCamera.Pos ) / Global.ZoomFactor ) / Global.fDistanceFactor;
             break;
         }
         default: {
@@ -3042,7 +3042,7 @@ opengl_renderer::Render_Alpha( TDynamicObject *Dynamic ) {
     float squaredistance;
     switch( m_renderpass.draw_mode ) {
         case rendermode::shadows: {
-            squaredistance = glm::length2( glm::vec3{ glm::dvec3{ Dynamic->vPosition - Global.pCameraPosition } } / Global.ZoomFactor ) / Global.fDistanceFactor;
+            squaredistance = glm::length2( glm::vec3{ glm::dvec3{ Dynamic->vPosition - Global.pCamera.Pos } } / Global.ZoomFactor ) / Global.fDistanceFactor;
             break;
         }
         default: {
@@ -3487,7 +3487,8 @@ glm::dvec3
 opengl_renderer::Update_Mouse_Position() {
 
     glm::dvec2 mousepos;
-    glfwGetCursorPos( m_window, &mousepos.x, &mousepos.y );
+    Application.get_cursor_pos( mousepos.x, mousepos.y );
+//    glfwGetCursorPos( m_window, &mousepos.x, &mousepos.y );
     mousepos.x = clamp<int>( mousepos.x, 0, Global.iWindowWidth - 1 );
     mousepos.y = clamp<int>( Global.iWindowHeight - clamp<int>( mousepos.y, 0, Global.iWindowHeight ), 0, Global.iWindowHeight - 1 ) ;
     GLfloat pointdepth;
@@ -3550,7 +3551,7 @@ opengl_renderer::Update( double const Deltatime ) {
     }
 
     if( ( true == Global.ResourceSweep )
-     && ( true == World.InitPerformed() ) ) {
+     && ( true == simulation::is_ready ) ) {
         // garbage collection
         m_geometry.update();
         m_textures.update();

@@ -14,8 +14,9 @@ http://mozilla.org/MPL/2.0/.
 #include "stdafx.h"
 #include "globals.h"
 
-#include "world.h"
 #include "simulation.h"
+#include "simulationenvironment.h"
+#include "driver.h"
 #include "logs.h"
 #include "Console.h"
 #include "PyInt.h"
@@ -25,8 +26,6 @@ global_settings Global;
 void
 global_settings::LoadIniFile(std::string asFileName) {
 
-    FreeCameraInit.resize( 10 );
-    FreeCameraInitAngle.resize( 10 );
     cParser parser(asFileName, cParser::buffer_FILE);
     ConfigParse(parser);
 };
@@ -94,7 +93,7 @@ global_settings::ConfigParse(cParser &Parser) {
         { // Mczapkie-130302
 
             Parser.getTokens();
-            Parser >> bFreeFly;
+            Parser >> FreeFlyModeFlag;
             Parser.getTokens(3, false);
             Parser >>
                 FreeCameraInit[0].x,
@@ -298,7 +297,7 @@ global_settings::ConfigParse(cParser &Parser) {
                 std::tm *localtime = std::localtime(&timenow);
                 fMoveLight = localtime->tm_yday + 1; // numer bieżącego dnia w roku
             }
-            pWorld->compute_season( fMoveLight );
+            simulation::Environment.compute_season( fMoveLight );
         }
         else if( token == "dynamiclights" ) {
             // number of dynamic lights in the scene

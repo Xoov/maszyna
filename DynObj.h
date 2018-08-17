@@ -331,6 +331,8 @@ private:
         sound_source dsbWejscie_na_bezoporow { sound_placement::engine }; // moved from cab
         sound_source motor_parallel { sound_placement::engine }; // moved from cab
         sound_source motor_shuntfield { sound_placement::engine };
+        sound_source linebreaker_close { sound_placement::engine };
+        sound_source linebreaker_open { sound_placement::engine };
         sound_source rsWentylator { sound_placement::engine }; // McZapkie-030302
         sound_source engine { sound_placement::engine }; // generally diesel engine
         sound_source engine_ignition { sound_placement::engine }; // moved from cab
@@ -537,6 +539,16 @@ private:
         return iAxleFirst ?
             Axle1.pPosition :
             Axle0.pPosition; };
+/*
+    // TODO: check if scanning takes into account direction when selecting axle
+    // if it does, replace the version above
+    // if it doesn't, fix it so it does
+    inline Math3D::vector3 AxlePositionGet() {
+        return (
+            iDirection ?
+                ( iAxleFirst ? Axle1.pPosition : Axle0.pPosition ) :
+                ( iAxleFirst ? Axle0.pPosition : Axle1.pPosition ) ); }
+*/
     inline Math3D::vector3 VectorFront() const {
         return vFront; };
     inline Math3D::vector3 VectorUp() const {
@@ -553,6 +565,8 @@ private:
         return MoverParameters->Dim.L; };
     inline double GetWidth() const {
         return MoverParameters->Dim.W; };
+    // calculates distance between event-starting axle and front of the vehicle
+    double tracing_offset() const;
     inline TTrack * GetTrack() {
         return (iAxleFirst ?
             Axle1.GetTrack() :

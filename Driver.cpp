@@ -18,14 +18,16 @@ http://mozilla.org/MPL/2.0/.
 #include <direct.h>
 #include "Globals.h"
 #include "Logs.h"
+#include "train.h"
 #include "mtable.h"
 #include "DynObj.h"
 #include "Event.h"
 #include "MemCell.h"
-#include "world.h"
+#include "simulation.h"
 #include "simulationtime.h"
 #include "track.h"
 #include "station.h"
+#include "keyboardinput.h"
 #include "utilities.h"
 
 #define LOGVELOCITY 0
@@ -473,14 +475,21 @@ void TController::TableTraceRoute(double fDistance, TDynamicObject *pVehicle)
         pTrack = pVehicle->RaTrackGet(); // odcinek, na którym stoi
         fTrackLength = pVehicle->RaTranslationGet(); // pozycja na tym torze (odległość od Point1)
         fLastDir = pVehicle->DirectionGet() * pVehicle->RaDirectionGet(); // ustalenie kierunku skanowania na torze
-        double odl_czola_od_wozka = (pVehicle->AxlePositionGet() - pVehicle->RearPosition()).Length();
         if( fLastDir < 0.0 ) {
             // jeśli w kierunku Point2 toru
             fTrackLength = pTrack->Length() - fTrackLength; // przeskanowana zostanie odległość do Point2
         }
-        fTrackLength -= odl_czola_od_wozka;
-        fCurrentDistance = -fLength - fTrackLength; // aktualna odległość ma być ujemna gdyż jesteśmy na końcu składu
-        fLastVel = -1.0; // pTrack->VelocityGet(); // aktualna prędkość // changed to -1 to recognize speed limit, if any
+        // account for the fact tracing begins from active axle, not the actual front of the vehicle
+        // NOTE: position of the couplers is modified by track offset, but the axles ain't, so we need to account for this as well
+        fTrackLength -= (
+            pVehicle->AxlePositionGet()
+            - pVehicle->RearPosition()
+            + pVehicle->VectorLeft() * pVehicle->MoverParameters->OffsetTrackH )
+            .Length();
+        // aktualna odległość ma być ujemna gdyż jesteśmy na końcu składu
+        fCurrentDistance = -fLength - fTrackLength;
+        // aktualna prędkość // changed to -1 to recognize speed limit, if any
+        fLastVel = -1.0;
         sSpeedTable.clear();
         iLast = -1;
         tLast = nullptr; //żaden nie sprawdzony
@@ -602,6 +611,17 @@ void TController::TableTraceRoute(double fDistance, TDynamicObject *pVehicle)
                 if (pTrack->eType == tt_Cross) {
                     // na skrzyżowaniach trzeba wybrać segment, po którym pojedzie pojazd
                     // dopiero tutaj jest ustalany kierunek segmentu na skrzyżowaniu
+                    int routewanted;
+                    if( false == AIControllFlag ) {
+                        routewanted = (
+                            input::keys[ GLFW_KEY_LEFT ] != GLFW_RELEASE ? 1 :
+                            input::keys[ GLFW_KEY_RIGHT ] != GLFW_RELEASE ? 2 :
+                            3 );
+                    }
+                    else {
+                        routewanted = 1 + std::floor( Random( static_cast<double>( pTrack->RouteCount() ) - 0.001 ) );
+                    }
+
                     sSpeedTable[iLast].iFlags |=
                         ( ( pTrack->CrossSegment(
                                 (fLastDir < 0 ?
@@ -610,7 +630,7 @@ void TController::TableTraceRoute(double fDistance, TDynamicObject *pVehicle)
 /*
                                 iRouteWanted )
 */
-                                1 + std::floor( Random( static_cast<double>(pTrack->RouteCount()) - 0.001 ) ) )
+                                routewanted )
                             & 0xf ) << 28 ); // ostatnie 4 bity pola flag
                     sSpeedTable[iLast].iFlags &= ~spReverse; // usunięcie flagi kierunku, bo może być błędna
                     if (sSpeedTable[iLast].iFlags < 0) {
@@ -859,26 +879,6 @@ TCommandType TController::TableUpdate(double &fVelDes, double &fDist, double &fN
                         }
                     } // koniec obsługi przelotu na W4
                     else {
-						if ( !sSpeedTable[i].bMoved )
-						{
-							auto L = 0.0;
-							auto Par1 = sSpeedTable[i].evEvent->ValueGet(1);
-							auto Par2 = sSpeedTable[i].evEvent->ValueGet(2);
-							if ((Par2 > 0) || (fLength < -Par2)) { //użyj tego W4
-								if (Par1 < 0) { //środek
-									L = -Par1 - fLength * 0.5 - 10;
-								}
-								else {
-									L = Par1;
-								}
-								L = std::max(0.0, std::min(L, abs(Par2) - 10 - fLength));
-								sSpeedTable[i].UpdateDistance(L);
-								sSpeedTable[i].bMoved = true;
-							}
-							else {
-								sSpeedTable[i].iFlags = 0;
-							}
-						}
                         // zatrzymanie na W4
                         if ( ( false == sSpeedTable[i].bMoved )
                           && ( ( OrderCurrentGet() & ( Obey_train | Shunt ) ) != 0 ) ) {
@@ -1437,13 +1437,13 @@ TController::braking_distance_multiplier( float const Targetvelocity ) const {
             return interpolate( 2.f, 1.f, static_cast<float>( mvOccupied->Vel / 40.0 ) );
         }
         // HACK: cargo trains or trains going downhill with high braking threshold need more distance to come to a full stop
-        if( ( fBrake_a0[ 0 ] > 0.2 )
-         && ( ( mvOccupied->BrakeDelayFlag & bdelay_G ) != 0 )
-           || ( fAccGravity > 0.025 ) ) {
+        if( ( fBrake_a0[ 1 ] > 0.2 )
+         && ( ( true == IsCargoTrain )
+           || ( fAccGravity > 0.025 ) ) ) {
             return interpolate(
                 1.f, 2.f,
                 clamp(
-                    ( fBrake_a0[ 0 ] - 0.2 ) / 0.2,
+                    ( fBrake_a0[ 1 ] - 0.2 ) / 0.2,
                     0.0, 1.0 ) );
         }
 
@@ -1618,35 +1618,6 @@ TController::TController(bool AI, TDynamicObject *NewControll, bool InitPsyche, 
 #endif
         LogFile.flush();
     }
-	
-	auto lookup =
-		FileExists(
-	{ "[1007]AI_pomocnik1" },
-	{ ".ogg", ".flac", ".wav" });
-	if (false == lookup.first.empty()) {
-		//  wczytanie dźwięku pomocnika1
-		tsHelperSignal1 = sound_source(sound_placement::internal, 2*EU07_SOUND_CABCONTROLSCUTOFFRANGE).deserialize(lookup.first + lookup.second, sound_type::single);
-		tsHelperSignal1.offset(glm::vec3());
-	}
-	lookup = FileExists(
-	{ "[1007]AI_pomocnik2" },
-	{ ".ogg", ".flac", ".wav" });
-	if (false == lookup.first.empty()) {
-		//  wczytanie dźwięku pomocnika1
-		tsHelperSignal2 = sound_source(sound_placement::internal, 2 * EU07_SOUND_CABCONTROLSCUTOFFRANGE).deserialize(lookup.first + lookup.second, sound_type::single);
-		tsHelperSignal2.offset(glm::vec3());
-	}
-	lookup = FileExists(
-	{ "[1007]AI_pomocnik3" },
-	{ ".ogg", ".flac", ".wav" });
-	if (false == lookup.first.empty()) {
-		//  wczytanie dźwięku pomocnika1
-		tsHelperSignal3 = sound_source(sound_placement::internal, 2 * EU07_SOUND_CABCONTROLSCUTOFFRANGE).deserialize(lookup.first + lookup.second, sound_type::single);
-		tsHelperSignal3.offset(glm::vec3());
-	}
-
-
-
 };
 
 void TController::CloseLog()
@@ -1774,7 +1745,11 @@ void TController::Activation()
         }
         if (pVehicle != old)
         { // jeśli zmieniony został pojazd prowadzony
-            Global.pWorld->CabChange(old, pVehicle); // ewentualna zmiana kabiny użytkownikowi
+            if( ( simulation::Train )
+             && ( simulation::Train->Dynamic() == old ) ) {
+                // ewentualna zmiana kabiny użytkownikowi
+                Global.changeDynObj = pVehicle; // uruchomienie protezy
+            }
             ControllingSet(); // utworzenie połączenia do sterowanego pojazdu (może się zmienić) -
             // silnikowy dla EZT
         }
@@ -1901,14 +1876,20 @@ void TController::AutoRewident()
         }
         d = d->Next(); // kolejny pojazd, podłączony od tyłu (licząc od czoła)
     }
-	//teraz zerujemy tabelkę opóźnienia hamowania
-	double velstep = (mvOccupied->Vmax*0.5) / BrakeAccTableSize;
-	for (int i = 0; i < BrakeAccTableSize; i++)
+    //ustawianie trybu pracy zadajnika hamulca, wystarczy raz po inicjalizacji AI
+    for( int i = 1; i <= 8; i *= 2 ) {
+        if( ( mvOccupied->BrakeOpModes & i ) > 0 ) {
+            mvOccupied->BrakeOpModeFlag = i;
+        }
+    }
+	// teraz zerujemy tabelkę opóźnienia hamowania
+	for (int i = 0; i < BrakeAccTableSize; ++i)
 	{
 		fBrake_a0[i+1] = 0;
 		fBrake_a1[i+1] = 0;
 	}
     // 4. Przeliczanie siły hamowania
+    double const velstep = ( mvOccupied->Vmax*0.5 ) / BrakeAccTableSize;
     d = pVehicles[0]; // pojazd na czele składu
 	while (d) { 
         for( int i = 0; i < BrakeAccTableSize; ++i ) {
@@ -1917,37 +1898,49 @@ void TController::AutoRewident()
 		}
 		d = d->Next(); // kolejny pojazd, podłączony od tyłu (licząc od czoła)
 	}
-	for (int i = 0; i < BrakeAccTableSize; i++)
+	for (int i = 0; i < BrakeAccTableSize; ++i)
 	{
 		fBrake_a1[i+1] -= fBrake_a0[i+1];
 		fBrake_a0[i+1] /= fMass;
 		fBrake_a0[i + 1] += 0.001*velstep*(1 + 2 * i);
 		fBrake_a1[i+1] /= (12*fMass);
 	}
+
+    IsCargoTrain = ( mvOccupied->CategoryFlag == 1 ) && ( ( mvOccupied->BrakeDelayFlag & bdelay_G ) != 0 );
+    IsHeavyCargoTrain = ( true == IsCargoTrain ) && ( fBrake_a0[ 1 ] > 0.4 );
+
+    BrakingInitialLevel = (
+        IsHeavyCargoTrain ? 1.25 :
+        IsCargoTrain      ? 1.25 :
+                            1.00 );
+
+    BrakingLevelIncrease = (
+        IsHeavyCargoTrain ? 0.25 :
+        IsCargoTrain      ? 0.25 :
+                            0.25 );
+
     if( mvOccupied->TrainType == dt_EZT ) {
-		fAccThreshold = std::max(-fBrake_a0[BrakeAccTableSize] - 8 * fBrake_a1[BrakeAccTableSize], -0.55);
+        fAccThreshold = std::max( -0.55, -fBrake_a0[ BrakeAccTableSize ] - 8 * fBrake_a1[ BrakeAccTableSize ] );
 		fBrakeReaction = 0.25;
 	}
     else if( mvOccupied->TrainType == dt_DMU ) {
-        fAccThreshold = std::max( -fBrake_a0[ BrakeAccTableSize ] - 8 * fBrake_a1[ BrakeAccTableSize ], -0.45 );
+        fAccThreshold = std::max( -0.45, -fBrake_a0[ BrakeAccTableSize ] - 8 * fBrake_a1[ BrakeAccTableSize ] );
         fBrakeReaction = 0.25;
     }
-    else if (ustaw > 16)
-	{
-		fAccThreshold = -fBrake_a0[BrakeAccTableSize] - 4 * fBrake_a1[BrakeAccTableSize];
+    else if (ustaw > 16) {
+        fAccThreshold = -fBrake_a0[ BrakeAccTableSize ] - 4 * fBrake_a1[ BrakeAccTableSize ];
 		fBrakeReaction = 1.00 + fLength*0.004;
 	}
-	else
-	{
-		fAccThreshold = -fBrake_a0[BrakeAccTableSize] - 1 * fBrake_a1[BrakeAccTableSize];
+	else {
+        fAccThreshold = -fBrake_a0[ BrakeAccTableSize ] - 1 * fBrake_a1[ BrakeAccTableSize ];
 		fBrakeReaction = 1.00 + fLength*0.005;
 	}
-	for (int i = 1; i <= 8; i *= 2) //ustawianie trybu pracy zadajnika hamulca, wystarczy raz po inicjalizacji AI
-	{
-		if ((mvOccupied->BrakeOpModes & i) > 0) {
-			mvOccupied->BrakeOpModeFlag = i;
-		}
-	}
+/*
+    if( IsHeavyCargoTrain ) {
+        // HACK: heavy cargo trains don't activate brakes early enough
+        fAccThreshold = std::max( -0.2, fAccThreshold );
+    }
+*/
 }
 
 double TController::ESMVelocity(bool Main)
@@ -1970,8 +1963,15 @@ double TController::ESMVelocity(bool Main)
 	for (int i = 0; i < 5; i++)
 	{
 		MS = mvControlling->MomentumF(IF, IF, SCPN);
-		Fmax = MS * mvControlling->RList[MCPN].Bn*mvControlling->RList[MCPN].Mn * 2 / mvControlling->WheelDiameter * mvControlling->Transmision.Ratio;
-		IF = 0.5*IF*(1 + FrictionMax/Fmax);
+		Fmax = MS * mvControlling->RList[MCPN].Bn * mvControlling->RList[MCPN].Mn * 2 / mvControlling->WheelDiameter * mvControlling->Transmision.Ratio;
+        if( Fmax != 0.0 ) {
+            IF = 0.5 * IF * ( 1 + FrictionMax / Fmax );
+        }
+        else {
+            // NOTE: gets trimmed to actual highest acceptable value after the loop
+            IF = std::numeric_limits<double>::max();
+            break;
+        }
 	}
 	IF = std::min(IF, mvControlling->Imax*fCurrentCoeff);
 	double R = mvControlling->RList[MCPN].R + mvControlling->CircuitRes + mvControlling->RList[MCPN].Mn*mvControlling->WindingRes;
@@ -1982,7 +1982,6 @@ double TController::ESMVelocity(bool Main)
 	ESMVel = ns * mvControlling->WheelDiameter*M_PI*3.6/mvControlling->Transmision.Ratio;
 	return ESMVel;
 }
-;
 
 int TController::CheckDirection() {
 
@@ -2007,8 +2006,7 @@ bool TController::CheckVehicles(TOrders user)
     fVelMax = -1; // ustalenie prędkości dla składu
     bool main = true; // czy jest głównym sterującym
     iDrivigFlags |= moveOerlikons; // zakładamy, że są same Oerlikony
-    // Ra 2014-09: ustawić moveMultiControl, jeśli wszystkie są w ukrotnieniu (i skrajne mają
-    // kabinę?)
+    // Ra 2014-09: ustawić moveMultiControl, jeśli wszystkie są w ukrotnieniu (i skrajne mają kabinę?)
     while (p)
     { // sprawdzanie, czy jest głównym sterującym, żeby nie było konfliktu
         if (p->Mechanik) // jeśli ma obsadę
@@ -2054,9 +2052,20 @@ bool TController::CheckVehicles(TOrders user)
         }
         if (AIControllFlag)
         { // jeśli prowadzi komputer
-            if (OrderCurrentGet() == Obey_train) // jeśli jazda pociągowa
-            {
-                Lights(1 + 4 + 16, 2 + 32 + 64); //światła pociągowe (Pc1) i końcówki (Pc5)
+            if (OrderCurrentGet() == Obey_train) {
+                // jeśli jazda pociągowa
+                // światła pociągowe (Pc1) i końcówki (Pc5)
+                auto const frontlights { (
+                    ( m_lighthints[ side::front ] != -1 ) ?
+                        m_lighthints[ side::front ] :
+                        light::headlight_left | light::headlight_right | light::headlight_upper ) };
+                auto const rearlights { (
+                    ( m_lighthints[ side::rear ] != -1 ) ?
+                        m_lighthints[ side::rear ] :
+                        light::redmarker_left | light::redmarker_right | light::rearendsignals ) };
+                Lights(
+                    frontlights,
+                    rearlights );
 #if LOGPRESS == 0
                 AutoRewident(); // nastawianie hamulca do jazdy pociągowej
 #endif
@@ -2128,6 +2137,9 @@ bool TController::CheckVehicles(TOrders user)
                         JumpToNextOrder(); // zmianę kierunku też można olać, ale zmienić kierunek
                     // skanowania!
                 }
+                break;
+            default:
+                break;
             }
         // Ra 2014-09: tymczasowo prymitywne ustawienie warunku pod kątem SN61
         if( ( mvOccupied->TrainType == dt_EZT )
@@ -2426,7 +2438,10 @@ bool TController::PrepareEngine()
                         mvControlling->IncMainCtrl( 1 );
                     }
                 }
-                mvControlling->MainSwitch(true);
+                if( ( mvControlling->EnginePowerSource.SourceType != TPowerSource::CurrentCollector )
+                 || ( std::max( mvControlling->GetTrainsetVoltage(), std::abs( mvControlling->RunningTraction.TractionVoltage ) ) > mvControlling->EnginePowerSource.CollectorParameters.MinV ) ) {
+                    mvControlling->MainSwitch( true );
+                }
 /*
                 if (mvControlling->EngineType == DieselEngine) {
                     // Ra 2014-06: dla SN61 trzeba wrzucić pierwszą pozycję - nie wiem, czy tutaj...
@@ -2629,7 +2644,9 @@ bool TController::IncBrake()
 					d = pVehicles[0]; // pojazd na czele składu
 					while (d)
 					{ // przeliczanie dodatkowego potrzebnego spadku ciśnienia
-						pos_corr+=(d->MoverParameters->Hamulec->GetCRP() - 5.0)*d->MoverParameters->TotalMass;
+                        if( ( d->MoverParameters->Hamulec->GetBrakeStatus() & b_dmg ) == 0 ) {
+                            pos_corr += ( d->MoverParameters->Hamulec->GetCRP() - 5.0 ) * d->MoverParameters->TotalMass;
+                        }
 						d = d->Next(); // kolejny pojazd, podłączony od tyłu (licząc od czoła)
 					}
 					pos_corr = pos_corr / fMass * 2.5;
@@ -2644,10 +2661,7 @@ bool TController::IncBrake()
                     if( deltaAcc > fBrake_a1[0])
 					{
                         if( mvOccupied->BrakeCtrlPosR < 0.1 ) {
-                            OK = mvOccupied->BrakeLevelAdd( (
-                                mvOccupied->BrakeDelayFlag > bdelay_G ?
-                                    1.0 :
-                                    1.25 ) );
+                            OK = mvOccupied->BrakeLevelAdd( BrakingInitialLevel );
 /*
                             // HACK: stronger braking to overcome SA134 engine behaviour
                             if( ( mvOccupied->TrainType == dt_DMU )
@@ -2662,10 +2676,11 @@ bool TController::IncBrake()
                         }
 						else
 						{
-                            OK = mvOccupied->BrakeLevelAdd( 0.25 );
-                            if( ( deltaAcc > 5 * fBrake_a1[ 0 ] )
-                             && ( mvOccupied->BrakeCtrlPosR <= 3.0 ) ) {
-                                mvOccupied->BrakeLevelAdd( 0.75 );
+                            OK = mvOccupied->BrakeLevelAdd( BrakingLevelIncrease );
+                            // brake harder if the acceleration is much higher than desired
+                            if( ( deltaAcc > 2 * fBrake_a1[ 0 ] )
+                             && ( mvOccupied->BrakeCtrlPosR + BrakingLevelIncrease <= 5.0 ) ) {
+                                mvOccupied->BrakeLevelAdd( BrakingLevelIncrease );
                             }
 						}
                     }
@@ -2801,36 +2816,42 @@ bool TController::IncSpeed()
                 // na pozycji 0 przejdzie, a na pozostałych będzie czekać, aż się załączą liniowe (zgaśnie DelayCtrlFlag)
 				if (Ready || (iDrivigFlags & movePress)) {
                     // use series mode:
-                    // to build up speed to 30/40 km/h for passenger/cargo train (10 km/h less if going uphill)
                     // if high threshold is set for motor overload relay,
-                    // if the power station is heavily burdened
+                    // if the power station is heavily burdened,
+                    // if it generates enough traction force
+                    // to build up speed to 30/40 km/h for passenger/cargo train (10 km/h less if going uphill)
+                    auto const sufficienttractionforce { std::abs( mvControlling->Ft ) > ( IsHeavyCargoTrain ? 125 : 100 ) * 1000.0 };
                     auto const useseriesmodevoltage { 0.80 * mvControlling->EnginePowerSource.CollectorParameters.MaxV };
+                    auto const seriesmodefieldshunting { ( mvControlling->ScndCtrlPos > 0 ) && ( mvControlling->RList[ mvControlling->MainCtrlPos ].Bn == 1 ) };
+                    auto const parallelmodefieldshunting { ( mvControlling->ScndCtrlPos > 0 ) && ( mvControlling->RList[ mvControlling->MainCtrlPos ].Bn > 1 ) };
                     auto const useseriesmode = (
-                        ( mvOccupied->Vel <= ( ( mvOccupied->BrakeDelayFlag & bdelay_G ) != 0 ? 35 : 25 ) + ( mvControlling->ScndCtrlPos == 0 ? 0 : 5 ) - ( ( fAccGravity < -0.025 ) ? 10 : 0 ) )
-                     || ( mvControlling->Imax > mvControlling->ImaxLo )
-                     || ( fVoltage < useseriesmodevoltage ) );
+                        ( mvControlling->Imax > mvControlling->ImaxLo )
+                     || ( fVoltage < useseriesmodevoltage )
+                     || ( ( true == sufficienttractionforce )
+                       && ( mvOccupied->Vel <= ( IsCargoTrain ? 35 : 25 ) + ( seriesmodefieldshunting ? 5 : 0 ) - ( ( fAccGravity < -0.025 ) ? 10 : 0 ) ) ) );
                     // when not in series mode use the first available parallel mode configuration until 50/60 km/h for passenger/cargo train
                     // (if there's only one parallel mode configuration it'll be used regardless of current speed)
-                    auto const scndctrl = (
+                    auto const usefieldshunting = (
                         ( mvControlling->StLinFlag )
                      && ( mvControlling->RList[ mvControlling->MainCtrlPos ].R < 0.01 )
                      && ( useseriesmode ?
                             mvControlling->RList[ mvControlling->MainCtrlPos ].Bn == 1 :
-                            ( ( mvOccupied->Vel <= ( ( mvOccupied->BrakeDelayFlag & bdelay_G ) != 0 ? 55 : 45 ) + ( mvControlling->ScndCtrlPos == 0 ? 0 : 5 ) ) ?
+                            ( ( true == sufficienttractionforce )
+                           && ( mvOccupied->Vel <= ( IsCargoTrain ? 55 : 45 ) + ( parallelmodefieldshunting ? 5 : 0 ) ) ?
                                 mvControlling->RList[ mvControlling->MainCtrlPos ].Bn > 1 :
                                 mvControlling->MainCtrlPos == mvControlling->MainCtrlPosNo ) ) );
 
 					double Vs = 99999;
-                    if( scndctrl ?
+                    if( usefieldshunting ?
                         ( mvControlling->ScndCtrlPos < mvControlling->ScndCtrlPosNo ) :
                         ( mvControlling->MainCtrlPos < mvControlling->MainCtrlPosNo ) ) {
-                        Vs = ESMVelocity( !scndctrl );
+                        Vs = ESMVelocity( !usefieldshunting );
                     }
 
                     if( ( std::abs( mvControlling->Im ) < ( fReady < 0.4 ? mvControlling->Imin : mvControlling->IminLo ) )
                      || ( mvControlling->Vel > Vs ) ) {
                         // Ra: wywalał nadmiarowy, bo Im może być ujemne; jak nie odhamowany, to nie przesadzać z prądem
-                        if( scndctrl ) {
+                        if( usefieldshunting ) {
                             // to dać bocznik
                             // engage the shuntfield only if there's sufficient power margin to draw from
                             OK = (
@@ -3287,6 +3308,7 @@ bool TController::PutCommand( std::string NewCommand, double NewValue1, double N
         mvOccupied->RunInternalCommand(); // rozpoznaj komende bo lokomotywa jej nie rozpoznaje
         return true; // załatwione
     }
+
     if (NewCommand == "Overhead")
     { // informacja o stanie sieci trakcyjnej
         fOverhead1 =
@@ -3295,13 +3317,15 @@ bool TController::PutCommand( std::string NewCommand, double NewValue1, double N
         // opuszczonym i ograniczeniem prędkości)
         return true; // załatwione
     }
-    else if (NewCommand == "Emergency_brake") // wymuszenie zatrzymania, niezależnie kto prowadzi
+
+    if (NewCommand == "Emergency_brake") // wymuszenie zatrzymania, niezależnie kto prowadzi
     { // Ra: no nadal nie jest zbyt pięknie
         SetVelocity(0, 0, reason);
         mvOccupied->PutCommand("Emergency_brake", 1.0, 1.0, mvOccupied->Loc);
         return true; // załatwione
     }
-    else if (NewCommand.compare(0, 10, "Timetable:") == 0)
+
+    if (NewCommand.compare(0, 10, "Timetable:") == 0)
     { // przypisanie nowego rozkładu jazdy, również prowadzonemu przez użytkownika
         NewCommand.erase(0, 10); // zostanie nazwa pliku z rozkładem
 #if LOGSTOPS
@@ -3412,6 +3436,7 @@ bool TController::PutCommand( std::string NewCommand, double NewValue1, double N
         // TrainNumber=floor(NewValue1); //i co potem ???
         return true; // załatwione
     }
+
     if (NewCommand == "SetVelocity")
     {
         if (NewLocation)
@@ -3431,16 +3456,20 @@ bool TController::PutCommand( std::string NewCommand, double NewValue1, double N
             iDrivigFlags |= moveStopHere; // stać do momentu podania komendy jazdy
         SetVelocity(NewValue1, NewValue2, reason); // bylo: nic nie rob bo SetVelocity zewnetrznie
         // jest wywolywane przez dynobj.cpp
+        return true;
     }
-    else if (NewCommand == "SetProximityVelocity")
+
+    if (NewCommand == "SetProximityVelocity")
     {
         /*
           if (SetProximityVelocity(NewValue1,NewValue2))
            if (NewLocation)
             vCommandLocation=*NewLocation;
         */
+        return true;
     }
-    else if (NewCommand == "ShuntVelocity")
+
+    if (NewCommand == "ShuntVelocity")
     { // uruchomienie jazdy manewrowej bądź zmiana prędkości
         if (NewLocation)
             vCommandLocation = *NewLocation;
@@ -3464,15 +3493,21 @@ bool TController::PutCommand( std::string NewCommand, double NewValue1, double N
             iDrivigFlags |= moveStopHere; // ma stać w miejscu
         if (fabs(NewValue1) > 2.0) // o ile wartość jest sensowna (-1 nie jest konkretną wartością)
             fShuntVelocity = fabs(NewValue1); // zapamiętanie obowiązującej prędkości dla manewrów
+
+        return true;
     }
-    else if (NewCommand == "Wait_for_orders")
+
+    if (NewCommand == "Wait_for_orders")
     { // oczekiwanie; NewValue1 - czas oczekiwania, -1 = na inną komendę
         if (NewValue1 > 0.0 ? NewValue1 > fStopTime : false)
             fStopTime = NewValue1; // Ra: włączenie czekania bez zmiany komendy
         else
             OrderList[OrderPos] = Wait_for_orders; // czekanie na komendę (albo dać OrderPos=0)
+
+        return true;
     }
-    else if (NewCommand == "Prepare_engine")
+
+    if (NewCommand == "Prepare_engine")
     { // włączenie albo wyłączenie silnika (w szerokim sensie)
         OrdersClear(); // czyszczenie tabelki rozkazów, aby nic dalej nie robił
         if (NewValue1 == 0.0)
@@ -3480,8 +3515,10 @@ bool TController::PutCommand( std::string NewCommand, double NewValue1, double N
         else if (NewValue1 > 0.0)
             OrderNext(Prepare_engine); // odpalić silnik (wyłączyć wszystko, co się da)
         // po załączeniu przejdzie do kolejnej komendy, po wyłączeniu na Wait_for_orders
+        return true;
     }
-    else if (NewCommand == "Change_direction")
+
+    if (NewCommand == "Change_direction")
     {
         TOrders o = OrderList[OrderPos]; // co robił przed zmianą kierunku
         if (!iEngineActive)
@@ -3507,16 +3544,21 @@ bool TController::PutCommand( std::string NewCommand, double NewValue1, double N
         if (mvOccupied->Vel >= 1.0) // jeśli jedzie
             iDrivigFlags &= ~moveStartHorn; // to bez trąbienia po ruszeniu z zatrzymania
         // Change_direction wykona się samo i następnie przejdzie do kolejnej komendy
+        return true;
     }
-    else if (NewCommand == "Obey_train")
+
+    if (NewCommand == "Obey_train")
     {
         if (!iEngineActive)
             OrderNext(Prepare_engine); // trzeba odpalić silnik najpierw
         OrderNext(Obey_train);
         // if (NewValue1>0) TrainNumber=floor(NewValue1); //i co potem ???
         OrderCheck(); // jeśli jazda pociągowa teraz, to wykonać niezbędne operacje
+
+        return true;
     }
-    else if (NewCommand == "Shunt")
+
+    if (NewCommand == "Shunt")
     { // NewValue1 - ilość wagonów (-1=wszystkie); NewValue2: 0=odczep, 1..63=dołącz, -1=bez zmian
         //-3,-y - podłączyć do całego stojącego składu (sprzęgiem y>=1), zmienić kierunek i czekać w
         // trybie pociągowym
@@ -3590,70 +3632,73 @@ bool TController::PutCommand( std::string NewCommand, double NewValue1, double N
             if (VelDesired==0)
              SetVelocity(20,0); //to niech jedzie
         */
+        return true;
     }
-    else if (NewCommand == "Jump_to_first_order")
+
+    if( NewCommand == "Jump_to_first_order" ) {
         JumpToFirstOrder();
-    else if (NewCommand == "Jump_to_order")
+        return true;
+    }
+
+    if (NewCommand == "Jump_to_order")
     {
-        if (NewValue1 == -1.0)
+        if( NewValue1 == -1.0 ) {
             JumpToNextOrder();
+        }
         else if ((NewValue1 >= 0) && (NewValue1 < maxorders))
         {
             OrderPos = floor(NewValue1);
-            if (!OrderPos)
-                OrderPos = 1; // zgodność wstecz: dopiero pierwsza uruchamia
+            if( !OrderPos ) {
+                // zgodność wstecz: dopiero pierwsza uruchamia
+                OrderPos = 1;
+            }
 #if LOGORDERS
             WriteLog("--> Jump_to_order");
             OrdersDump();
 #endif
         }
-        /*
-          if (WriteLogFlag)
-          {
-           append(AIlogFile);
-           writeln(AILogFile,ElapsedTime:5:2," - new order: ",Order2Str( OrderList[OrderPos])," @
-          ",OrderPos);
-           close(AILogFile);
-          }
-        */
+        return true;
     }
-    /* //ta komenda jest teraz skanowana, więc wysyłanie jej eventem nie ma sensu
-     else if (NewCommand=="OutsideStation") //wskaznik W5
-     {
-      if (OrderList[OrderPos]==Obey_train)
-       SetVelocity(NewValue1,NewValue2,stopOut); //koniec stacji - predkosc szlakowa
-      else //manewry - zawracaj
-      {
-       iDirectionOrder=-iDirection; //zmiana na przeciwny niż obecny
-       OrderNext(Change_direction); //zmiana kierunku
-       OrderNext(Shunt); //a dalej manewry
-       iDrivigFlags&=~moveStartHorn; //bez trąbienia po zatrzymaniu
-      }
-     }
-    */
-    else if (NewCommand == "Warning_signal")
+
+    if (NewCommand == "Warning_signal")
     {
-        if (AIControllFlag) // poniższa komenda nie jest wykonywana przez użytkownika
-            if (NewValue1 > 0)
-            {
+        if( AIControllFlag ) {
+            // poniższa komenda nie jest wykonywana przez użytkownika
+            if( NewValue1 > 0 ) {
                 fWarningDuration = NewValue1; // czas trąbienia
                 mvOccupied->WarningSignal = NewValue2; // horn combination flag
             }
+        }
+        return true;
     }
-    else if (NewCommand == "Radio_channel")
-    { // wybór kanału radiowego (którego powinien używać AI, ręczny maszynista musi go ustawić sam)
-        if (NewValue1 >= 0) // wartości ujemne są zarezerwowane, -1 = nie zmieniać kanału
-        {
+
+    if (NewCommand == "Radio_channel") {
+        // wybór kanału radiowego (którego powinien używać AI, ręczny maszynista musi go ustawić sam)
+        if (NewValue1 >= 0) {
+            // wartości ujemne są zarezerwowane, -1 = nie zmieniać kanału
             iRadioChannel = NewValue1;
-            if (iGuardRadio)
-                iGuardRadio = iRadioChannel; // kierownikowi też zmienić
+            if( iGuardRadio ) {
+                // kierownikowi też zmienić
+                iGuardRadio = iRadioChannel;
+            }
         }
         // NewValue2 może zawierać dodatkowo oczekiwany kod odpowiedzi, np. dla W29 "nawiązać
         // łączność radiową z dyżurnym ruchu odcinkowym"
+        return true;
     }
-    else
-        return false; // nierozpoznana - wysłać bezpośrednio do pojazdu
-    return true; // komenda została przetworzona
+
+    if( NewCommand == "SetLights" ) {
+        // set consist lights pattern hints
+        m_lighthints[ side::front ] = static_cast<int>( NewValue1 );
+        m_lighthints[ side::rear ] = static_cast<int>( NewValue2 );
+        if( OrderCurrentGet() == Obey_train ) {
+            // light hints only apply in the obey_train mode
+            CheckVehicles();
+        }
+        return true;
+    }
+
+    return false; // nierozpoznana - wysłać bezpośrednio do pojazdu
 };
 
 void TController::PhysicsLog()
@@ -3771,12 +3816,13 @@ TController::UpdateSituation(double dt) {
                 // Ra: odluźnianie przeładowanych lokomotyw, ciągniętych na zimno - prowizorka...
                 if (AIControllFlag) // skład jak dotąd był wyluzowany
                 {
-                    if (mvOccupied->BrakeCtrlPos == 0) // jest pozycja jazdy
-                        if ((p->MoverParameters->PipePress - 5.0) >
-                            -0.1) // jeśli ciśnienie jak dla jazdy
-                            if (p->MoverParameters->Hamulec->GetCRP() >
-                                p->MoverParameters->PipePress + 0.12) // za dużo w zbiorniku
-                                p->MoverParameters->BrakeReleaser(1); // indywidualne luzowanko
+                    if( ( mvOccupied->BrakeCtrlPos == 0 ) // jest pozycja jazdy
+                     && ( ( p->MoverParameters->Hamulec->GetBrakeStatus() & b_dmg ) == 0 ) // brake isn't broken
+                     && ( p->MoverParameters->PipePress - 5.0 > -0.1 ) // jeśli ciśnienie jak dla jazdy
+                     && ( p->MoverParameters->Hamulec->GetCRP() > p->MoverParameters->PipePress + 0.12 ) ) { // za dużo w zbiorniku
+                        // indywidualne luzowanko
+                        p->MoverParameters->BrakeReleaser( 1 );
+                    }
                     if (p->MoverParameters->Power > 0.01) // jeśli ma silnik
                         if (p->MoverParameters->FuseFlag) // wywalony nadmiarowy
                             Need_TryAgain = true; // reset jak przy wywaleniu nadmiarowego
@@ -4339,23 +4385,14 @@ TController::UpdateSituation(double dt) {
     }
     case Shunt: {
         // na jaką odleglość i z jaką predkością ma podjechać
-        fMinProximityDist = 5.0;
-        fMaxProximityDist = 10.0; //[m]
-        if( pVehicles[ 0 ] != pVehicles[ 1 ] ) {
-            // for larger consists increase margins to account for slower braking etc
-            // NOTE: this will affect also multi-unit vehicles TBD: is this what we want?
-            fMinProximityDist *= 2.0;
-            fMaxProximityDist *= 2.0;
-            if( ( mvOccupied->BrakeDelayFlag & bdelay_G ) != 0 ) {
-                // additional safety margin for cargo consists
-                fMinProximityDist *= 2.0;
-                fMaxProximityDist *= 2.0;
-                if( fBrake_a0[ 0 ] >= 0.35 ) {
-                    // cargo trains with high braking threshold may require even larger safety margin
-                    fMaxProximityDist += 20.0;
-                }
-            }
+        // TODO: test if we can use the distances calculation from obey_train
+        fMinProximityDist = std::min( 5 + iVehicles, 25 );
+        fMaxProximityDist = std::min( 10 + iVehicles, 50 );
+/*
+        if( IsHeavyCargoTrain ) {
+            fMaxProximityDist *= 1.5;
         }
+*/
         fVelPlus = 2.0; // dopuszczalne przekroczenie prędkości na ograniczeniu bez hamowania
         // margines prędkości powodujący załączenie napędu
         // były problemy z jazdą np. 3km/h podczas ładowania wagonów
@@ -4366,11 +4403,25 @@ TController::UpdateSituation(double dt) {
         // na jaka odleglosc i z jaka predkoscia ma podjechac do przeszkody
         if( mvOccupied->CategoryFlag & 1 ) {
             // jeśli pociąg
-            fMinProximityDist = 15.0;
-            fMaxProximityDist =
-                ( mvOccupied->Vel > 0.0 ) ?
-                    25.0 :
-                    50.0; //[m] jak stanie za daleko, to niech nie dociąga paru metrów
+            fMinProximityDist = clamp(  5 + iVehicles, 10, 15 );
+            fMaxProximityDist = clamp( 10 + iVehicles, 15, 40 );
+
+            if( IsCargoTrain ) {
+                // increase distances for cargo trains to take into account slower reaction to brakes
+                fMinProximityDist += 10.0;
+                fMaxProximityDist += 10.0;
+/*
+                if( IsHeavyCargoTrain ) {
+                    // cargo trains with high braking threshold may require even larger safety margin
+                    fMaxProximityDist += 20.0;
+                }
+*/
+            }
+            if( mvOccupied->Vel < 0.1 ) {
+                // jak stanie za daleko, to niech nie dociąga paru metrów
+                fMaxProximityDist = 50.0;
+            }
+
             if( iDrivigFlags & moveLate ) {
                 // jeśli spóźniony, to gna
                 fVelMinus = 1.0;
@@ -4385,20 +4436,11 @@ TController::UpdateSituation(double dt) {
                 // bottom margin raised to 2 km/h to give the AI more leeway at low speed limits
                 fVelPlus = clamp( std::ceil( 0.05 * VelDesired ), 2.0, 5.0 );
             }
-            if( mvOccupied->BrakeDelayFlag == bdelay_G ) {
-                // increase distances for cargo trains to take into account slower reaction to brakes
-                fMinProximityDist += 10.0;
-                fMaxProximityDist += 15.0;
-                if( fBrake_a0[ 0 ] >= 0.35 ) {
-                    // cargo trains with high braking threshold may require even larger safety margin
-                    fMaxProximityDist += 20.0;
-                }
-            }
         }
         else {
             // samochod (sokista też)
-            fMinProximityDist = std::max( 3.0, mvOccupied->Vel * 0.2   );
-            fMaxProximityDist = std::max( 9.0, mvOccupied->Vel * 0.375 ); //[m]
+            fMinProximityDist = std::max( 3.5, mvOccupied->Vel * 0.2   );
+            fMaxProximityDist = std::max( 9.5, mvOccupied->Vel * 0.375 ); //[m]
             // margines prędkości powodujący załączenie napędu
             fVelMinus = 2.0;
             // dopuszczalne przekroczenie prędkości na ograniczeniu bez hamowania
@@ -4528,7 +4570,6 @@ TController::UpdateSituation(double dt) {
         if( ( true == AIControllFlag)
          && ( true == TestFlag( OrderList[ OrderPos ], Change_direction ) ) ) {
             // sprobuj zmienic kierunek (może być zmieszane z jeszcze jakąś komendą)
-            SetVelocity( 0, 0, stopDir ); // najpierw trzeba się zatrzymać
             if( mvOccupied->Vel < 0.1 ) {
                 // jeśli się zatrzymał, to zmieniamy kierunek jazdy, a nawet kabinę/człon
                 Activation(); // ustawienie zadanego wcześniej kierunku i ewentualne przemieszczenie AI
@@ -4576,8 +4617,8 @@ TController::UpdateSituation(double dt) {
             // Ra: odczyt (ActualProximityDist), (VelNext) i (AccPreferred) z tabelki prędkosci
             TCommandType comm = TableUpdate(VelDesired, ActualProximityDist, VelNext, AccDesired);
 
-            switch (comm)
-            { // ustawienie VelSignal - trochę proteza = do przemyślenia
+            switch (comm) {
+                // ustawienie VelSignal - trochę proteza = do przemyślenia
             case TCommandType::cm_Ready: // W4 zezwolił na jazdę
                 // ewentualne doskanowanie trasy za W4, który zezwolił na jazdę
                 TableCheck( routescanrange);
@@ -4612,6 +4653,11 @@ TController::UpdateSituation(double dt) {
                 break;
             default:
                 break;
+            }
+
+            if( true == TestFlag( OrderList[ OrderPos ], Change_direction ) ) {
+                // if ordered to change direction, try to stop
+                SetVelocity( 0, 0, stopDir );
             }
 
             if( VelNext == 0.0 ) {
@@ -4670,14 +4716,15 @@ TController::UpdateSituation(double dt) {
                                 fMinProximityDist : // cars can bunch up tighter
                                 fMaxProximityDist ) ); // other vehicle types less so
 */
-                    ActualProximityDist = std::min(
-                        ActualProximityDist,
-                        vehicle->fTrackBlock );
                     double k = coupler->Connected->Vel; // prędkość pojazdu z przodu (zakładając,
                     // że jedzie w tę samą stronę!!!)
-                    if( k - vel < 10 ) {
+                    if( k - vel < 5 ) {
                         // porównanie modułów prędkości [km/h]
                         // zatroszczyć się trzeba, jeśli tamten nie jedzie znacząco szybciej
+                        ActualProximityDist = std::min(
+                            ActualProximityDist,
+                            vehicle->fTrackBlock );
+
                         double const distance = vehicle->fTrackBlock - fMaxProximityDist - ( fBrakeDist * 1.15 ); // odległość bezpieczna zależy od prędkości
                         if( distance < 0.0 ) {
                             // jeśli odległość jest zbyt mała
@@ -4887,7 +4934,7 @@ TController::UpdateSituation(double dt) {
                             if( VelNext == 0.0 ) {
                                 if( mvOccupied->CategoryFlag & 1 ) {
                                     // trains
-                                    if( ( OrderCurrentGet() & Shunt )
+                                    if( ( OrderCurrentGet() & ( Shunt | Connect ) )
                                      && ( pVehicles[0]->fTrackBlock < 50.0 ) ) {
                                         // crude detection of edge case, if approaching another vehicle coast slowly until min distance
                                         // this should allow to bunch up trainsets more on sidings
@@ -4907,25 +4954,32 @@ TController::UpdateSituation(double dt) {
                             }
 						}
 						else {
-                            // przy dużej różnicy wysoki stopień (1,00 potrzebnego opoznienia)
-                            auto const slowdowndistance { (
-                                ( OrderCurrentGet() & Connect ) == 0 ?
-                                    100.0 :
-                                    25.0 ) };
-                            if( ( std::max( slowdowndistance, fMaxProximityDist ) + fBrakeDist * braking_distance_multiplier( VelNext ) ) >= ( ActualProximityDist - fMaxProximityDist ) ) {
-                                // don't slow down prematurely; as long as we have room to come to a full stop at a safe distance, we're good
-                                // ensure some minimal coasting speed, otherwise a vehicle entering this zone at very low speed will be crawling forever
-                                auto const brakingpointoffset = VelNext * braking_distance_multiplier( VelNext );
-                                AccDesired = std::min(
-                                    AccDesired,
-                                    ( VelNext * VelNext - vel * vel )
-                                    / ( 25.92
-                                        * std::max(
-                                            ActualProximityDist - brakingpointoffset,
-                                            std::min(
-                                                ActualProximityDist,
-                                                brakingpointoffset ) )
-                                        + 0.1 ) ); // najpierw hamuje mocniej, potem zluzuje
+                            // outside of max safe range
+                            AccDesired = AccPreferred;
+                            if( vel > min_speed( 10.0, VelDesired ) ) {
+                                // allow to coast at reasonably low speed
+                                auto const brakingdistance { fBrakeDist * braking_distance_multiplier( VelNext ) };
+                                auto const slowdowndistance { (
+                                    mvOccupied->CategoryFlag == 2 ? // cars can stop on a dime, for bigger vehicles we enforce some minimal braking distance
+                                        brakingdistance :
+                                        std::max(
+                                            ( ( OrderCurrentGet() & Connect ) == 0 ? 100.0 : 25.0 ),
+                                            brakingdistance ) ) };
+                                if( ( brakingdistance + std::max( slowdowndistance, fMaxProximityDist ) ) >= ( ActualProximityDist - fMaxProximityDist ) ) {
+                                    // don't slow down prematurely; as long as we have room to come to a full stop at a safe distance, we're good
+                                    // ensure some minimal coasting speed, otherwise a vehicle entering this zone at very low speed will be crawling forever
+                                    auto const brakingpointoffset = VelNext * braking_distance_multiplier( VelNext );
+                                    AccDesired = std::min(
+                                        AccDesired,
+                                        ( VelNext * VelNext - vel * vel )
+                                        / ( 25.92
+                                            * std::max(
+                                                ActualProximityDist - brakingpointoffset,
+                                                std::min(
+                                                    ActualProximityDist,
+                                                    brakingpointoffset ) )
+                                            + 0.1 ) ); // najpierw hamuje mocniej, potem zluzuje
+                                }
                             }
 						}
                         AccDesired = std::min( AccDesired, AccPreferred );
@@ -5026,8 +5080,8 @@ TController::UpdateSituation(double dt) {
                             // if it looks like we'll exceed maximum speed start thinking about slight slowing down
                             AccDesired = std::min( AccDesired, -0.25 );
                             // HACK: for cargo trains with high braking threshold ensure we cross that threshold
-                            if( ( ( mvOccupied->BrakeDelayFlag & bdelay_G ) != 0 )
-                               && ( fBrake_a0[ 0 ] > 0.2 ) ) {
+                            if( ( true == IsCargoTrain )
+                             && ( fBrake_a0[ 0 ] > 0.2 ) ) {
                                 AccDesired -= clamp( fBrake_a0[ 0 ] - 0.2, 0.0, 0.15 );
                             }
                         }
@@ -5085,30 +5139,10 @@ TController::UpdateSituation(double dt) {
 
             // last step sanity check, until the whole calculation is straightened out
             AccDesired = std::min( AccDesired, AccPreferred );
-            AccDesired = clamp( AccDesired, -1.9, 0.9 );
-
-			if ((-AccDesired > fBrake_a0[0] + 8 * fBrake_a1[0]) && (HelperState == 0))
-			{
-				HelperState = 1;
-				tsHelperSignal1.owner(pVehicle);
-				tsHelperSignal1.play();
-			}
-			if ((-AccDesired > fBrake_a0[0] + 12 * fBrake_a1[0]) && (HelperState == 1))
-			{
-				HelperState = 2;
-				tsHelperSignal2.owner(pVehicle);
-				tsHelperSignal2.play();
-			}
-			if ((-AccDesired > 0) && (HelperState == 2) && (-fProximityDist > 5))
-			{
-				HelperState = 3;
-				tsHelperSignal3.owner(pVehicle);
-				tsHelperSignal3.play();
-			}
-			if ((-AccDesired < fBrake_a0[0] + 2 * fBrake_a1[0]) && (HelperState > 0) && (vel>1))
-			{
-				HelperState = 0;
-			}
+            AccDesired = clamp(
+                AccDesired,
+                    ( mvControlling->CategoryFlag == 2  ? -2.0 : -0.9 ),
+                    ( mvControlling->CategoryFlag == 2 ?   2.0 :  0.9 ) );
 
             if (AIControllFlag) {
                 // część wykonawcza tylko dla AI, dla człowieka jedynie napisy
@@ -5200,7 +5234,7 @@ TController::UpdateSituation(double dt) {
                              && ( BrakeChargingCooldown >= 0.0 ) )  {
 
                                 if( ( iDrivigFlags & moveOerlikons )
-                                 || ( mvOccupied->BrakeDelayFlag & bdelay_G ) ) {
+                                 || ( true == IsCargoTrain ) ) {
                                     // napełnianie w Oerlikonie
                                     mvOccupied->BrakeLevelSet( mvOccupied->Handle->GetPos( bh_FS ) );
                                     // don't charge the brakes too often, or we risk overcharging
@@ -5526,6 +5560,11 @@ void TController::JumpToFirstOrder()
 
 void TController::OrderCheck()
 { // reakcja na zmianę rozkazu
+
+    if( OrderList[ OrderPos ] != Obey_train ) {
+        // reset light hints
+        m_lighthints[ side::front ] = m_lighthints[ side::rear ] = -1;
+    }
     if( OrderList[ OrderPos ] & ( Shunt | Connect | Obey_train ) ) {
         CheckVehicles(); // sprawdzić światła
     }

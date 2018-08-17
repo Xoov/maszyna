@@ -21,8 +21,11 @@ http://mozilla.org/MPL/2.0/.
 #include "camera.h"
 #include "Logs.h"
 #include "MdlMngr.h"
+#include "model3d.h"
+#include "dumb3d.h"
 #include "Timer.h"
 #include "Driver.h"
+#include "dynobj.h"
 #include "mtable.h"
 #include "Console.h"
 
@@ -311,6 +314,11 @@ TTrain::commandhandler_map const TTrain::m_commandhandlers = {
     { user_command::doorlocktoggle, &TTrain::OnCommand_doorlocktoggle },
     { user_command::doortoggleleft, &TTrain::OnCommand_doortoggleleft },
     { user_command::doortoggleright, &TTrain::OnCommand_doortoggleright },
+    { user_command::dooropenleft, &TTrain::OnCommand_dooropenleft },
+    { user_command::dooropenright, &TTrain::OnCommand_dooropenright },
+    { user_command::doorcloseleft, &TTrain::OnCommand_doorcloseleft },
+    { user_command::doorcloseright, &TTrain::OnCommand_doorcloseright },
+    { user_command::doorcloseall, &TTrain::OnCommand_doorcloseall },
     { user_command::carcouplingincrease, &TTrain::OnCommand_carcouplingincrease },
     { user_command::carcouplingdisconnect, &TTrain::OnCommand_carcouplingdisconnect },
     { user_command::departureannounce, &TTrain::OnCommand_departureannounce },
@@ -3358,14 +3366,14 @@ void TTrain::OnCommand_redmarkerstoggle( TTrain *Train, command_data const &Comm
     if( ( true == FreeFlyModeFlag )
      && ( Command.action == GLFW_PRESS ) ) {
 
-        auto *vehicle { std::get<TDynamicObject *>( simulation::Region->find_vehicle( Global.pCameraPosition, 10, false, true ) ) };
+        auto *vehicle { std::get<TDynamicObject *>( simulation::Region->find_vehicle( Global.pCamera.Pos, 10, false, true ) ) };
 
         if( vehicle == nullptr ) { return; }
 
         int const CouplNr {
             clamp(
                 vehicle->DirectionGet()
-                * ( LengthSquared3( vehicle->HeadPosition() - Global.pCameraPosition ) > LengthSquared3( vehicle->RearPosition() - Global.pCameraPosition ) ?
+                * ( LengthSquared3( vehicle->HeadPosition() - Global.pCamera.Pos ) > LengthSquared3( vehicle->RearPosition() - Global.pCamera.Pos ) ?
                      1 :
                     -1 ),
                 0, 1 ) }; // z [-1,1] zrobić [0,1]
@@ -3384,14 +3392,14 @@ void TTrain::OnCommand_endsignalstoggle( TTrain *Train, command_data const &Comm
     if( ( true == FreeFlyModeFlag )
      && ( Command.action == GLFW_PRESS ) ) {
 
-        auto *vehicle { std::get<TDynamicObject *>( simulation::Region->find_vehicle( Global.pCameraPosition, 10, false, true ) ) };
+        auto *vehicle { std::get<TDynamicObject *>( simulation::Region->find_vehicle( Global.pCamera.Pos, 10, false, true ) ) };
 
         if( vehicle == nullptr ) { return; }
 
         int const CouplNr {
             clamp(
                 vehicle->DirectionGet()
-                * ( LengthSquared3( vehicle->HeadPosition() - Global.pCameraPosition ) > LengthSquared3( vehicle->RearPosition() - Global.pCameraPosition ) ?
+                * ( LengthSquared3( vehicle->HeadPosition() - Global.pCamera.Pos ) > LengthSquared3( vehicle->RearPosition() - Global.pCamera.Pos ) ?
                      1 :
                     -1 ),
                 0, 1 ) }; // z [-1,1] zrobić [0,1]
@@ -3723,24 +3731,106 @@ void TTrain::OnCommand_doortoggleleft( TTrain *Train, command_data const &Comman
                 Train->mvOccupied->DoorLeftOpened :
                 Train->mvOccupied->DoorRightOpened ) ) {
             // open
-            if( Train->mvOccupied->DoorOpenCtrl != control_t::driver ) {
-                return;
-            }
-            if( Train->mvOccupied->ActiveCab == 1 ) {
-                Train->mvOccupied->DoorLeft( true );
-            }
-            else {
-                // in the rear cab sides are reversed...
-                Train->mvOccupied->DoorRight( true );
-            }
-            // visual feedback
-            Train->ggDoorLeftButton.UpdateValue( 1.0, Train->dsbSwitch );
+            OnCommand_dooropenleft( Train, Command );
         }
         else {
             // close
-            if( Train->mvOccupied->DoorCloseCtrl != control_t::driver ) {
+            if( ( Train->ggDoorAllOffButton.SubModel != nullptr )
+             && ( Train->ggDoorLeftOffButton.SubModel == nullptr ) ) {
+                // OnCommand_doorcloseall( Train, Command );
+                // if two-button setup lacks dedicated closing button require the user to press appropriate button manually
                 return;
             }
+            else {
+                OnCommand_doorcloseleft( Train, Command );
+            }
+        }
+    }
+    else if( Command.action == GLFW_RELEASE ) {
+
+        if( true == (
+            Train->mvOccupied->ActiveCab == 1 ?
+                Train->mvOccupied->DoorLeftOpened :
+                Train->mvOccupied->DoorRightOpened ) ) {
+            // open
+            if( ( Train->mvOccupied->DoorClosureWarningAuto )
+             && ( Train->mvOccupied->DepartureSignal ) ) {
+                // complete closing the doors
+                if( ( Train->ggDoorAllOffButton.SubModel != nullptr )
+                 && ( Train->ggDoorLeftOffButton.SubModel == nullptr ) ) {
+                    // OnCommand_doorcloseall( Train, Command );
+                    // if two-button setup lacks dedicated closing button require the user to press appropriate button manually
+                    return;
+                }
+                else {
+                    OnCommand_doorcloseleft( Train, Command );
+                }
+            }
+            else {
+                OnCommand_dooropenleft( Train, Command );
+            }
+        }
+        else {
+            // close
+            if( ( Train->ggDoorAllOffButton.SubModel != nullptr )
+             && ( Train->ggDoorLeftOffButton.SubModel == nullptr ) ) {
+                // OnCommand_doorcloseall( Train, Command );
+                // if two-button setup lacks dedicated closing button require the user to press appropriate button manually
+                return;
+            }
+            else {
+                OnCommand_doorcloseleft( Train, Command );
+            }
+        }
+    }
+}
+
+void TTrain::OnCommand_dooropenleft( TTrain *Train, command_data const &Command ) {
+
+    if( Command.action == GLFW_PRESS ) {
+        // NOTE: test how the door state check works with consists where the occupied vehicle doesn't have opening doors
+        if( Train->mvOccupied->DoorOpenCtrl != control_t::driver ) {
+            return;
+        }
+        if( Train->mvOccupied->ActiveCab == 1 ) {
+            Train->mvOccupied->DoorLeft( true );
+        }
+        else {
+            // in the rear cab sides are reversed...
+            Train->mvOccupied->DoorRight( true );
+        }
+        // visual feedback
+        if( Train->ggDoorLeftOnButton.SubModel != nullptr ) {
+            // two separate impulse switches
+            Train->ggDoorLeftOnButton.UpdateValue( 1.0, Train->dsbSwitch );
+        }
+        else {
+            // single two-state switch
+            Train->ggDoorLeftButton.UpdateValue( 1.0, Train->dsbSwitch );
+        }
+    }
+    else if( Command.action == GLFW_RELEASE ) {
+        // visual feedback
+        if( Train->ggDoorLeftOnButton.SubModel != nullptr ) {
+            // two separate impulse switches
+            Train->ggDoorLeftOnButton.UpdateValue( 0.0, Train->dsbSwitch );
+        }
+    }
+}
+
+void TTrain::OnCommand_doorcloseleft( TTrain *Train, command_data const &Command ) {
+
+    if( Command.action == GLFW_PRESS ) {
+
+        if( Train->mvOccupied->DoorCloseCtrl != control_t::driver ) {
+            return;
+        }
+
+        if( Train->mvOccupied->DoorClosureWarningAuto ) {
+            // automatic departure signal delays actual door closing until the button is released
+            Train->mvOccupied->signal_departure( true );
+        }
+        else {
             // TODO: move door opening/closing to the update, so the switch animation doesn't hinge on door working
             if( Train->mvOccupied->ActiveCab == 1 ) {
                 Train->mvOccupied->DoorLeft( false );
@@ -3749,9 +3839,35 @@ void TTrain::OnCommand_doortoggleleft( TTrain *Train, command_data const &Comman
                 // in the rear cab sides are reversed...
                 Train->mvOccupied->DoorRight( false );
             }
-            // visual feedback
+        }
+        // visual feedback
+        if( Train->ggDoorLeftOffButton.SubModel != nullptr ) {
+            // two separate switches to open and close the door
+            Train->ggDoorLeftOffButton.UpdateValue( 1.0, Train->dsbSwitch );
+        }
+        else {
+            // single two-state switch
             Train->ggDoorLeftButton.UpdateValue( 0.0, Train->dsbSwitch );
         }
+    }
+    else if( Command.action == GLFW_RELEASE ) {
+
+        if( Train->mvOccupied->DoorClosureWarningAuto ) {
+            // automatic departure signal delays actual door closing until the button is released
+            Train->mvOccupied->signal_departure( false );
+            // now we can actually close the door
+            if( Train->mvOccupied->ActiveCab == 1 ) {
+                Train->mvOccupied->DoorLeft( false );
+            }
+            else {
+                // in the rear cab sides are reversed...
+                Train->mvOccupied->DoorRight( false );
+            }
+        }
+        // visual feedback
+        // dedicated closing buttons are presumed to be impulse switches and return automatically to neutral position
+        if( Train->ggDoorLeftOffButton.SubModel )
+            Train->ggDoorLeftOffButton.UpdateValue( 0.0, Train->dsbSwitch );
     }
 }
 
@@ -3764,24 +3880,107 @@ void TTrain::OnCommand_doortoggleright( TTrain *Train, command_data const &Comma
                 Train->mvOccupied->DoorRightOpened :
                 Train->mvOccupied->DoorLeftOpened ) ) {
             // open
-            if( Train->mvOccupied->DoorOpenCtrl != control_t::driver ) {
-                return;
-            }
-            if( Train->mvOccupied->ActiveCab == 1 ) {
-                Train->mvOccupied->DoorRight( true );
-            }
-            else {
-                // in the rear cab sides are reversed...
-                Train->mvOccupied->DoorLeft( true );
-            }
-            // visual feedback
-            Train->ggDoorRightButton.UpdateValue( 1.0, Train->dsbSwitch );
+            OnCommand_dooropenright( Train, Command );
         }
         else {
             // close
-            if( Train->mvOccupied->DoorCloseCtrl != control_t::driver ) {
+            if( ( Train->ggDoorAllOffButton.SubModel != nullptr )
+             && ( Train->ggDoorRightOffButton.SubModel == nullptr ) ) {
+                // OnCommand_doorcloseall( Train, Command );
+                // if two-button setup lacks dedicated closing button require the user to press appropriate button manually
                 return;
             }
+            else {
+                OnCommand_doorcloseright( Train, Command );
+            }
+        }
+    }
+    else if( Command.action == GLFW_RELEASE ) {
+
+        if( true == (
+            Train->mvOccupied->ActiveCab == 1 ?
+                Train->mvOccupied->DoorRightOpened :
+                Train->mvOccupied->DoorLeftOpened ) ) {
+            // open
+            if( ( Train->mvOccupied->DoorClosureWarningAuto )
+             && ( Train->mvOccupied->DepartureSignal ) ) {
+                // complete closing the doors
+                if( ( Train->ggDoorAllOffButton.SubModel != nullptr )
+                 && ( Train->ggDoorRightOffButton.SubModel == nullptr ) ) {
+                    // OnCommand_doorcloseall( Train, Command );
+                    // if two-button setup lacks dedicated closing button require the user to press appropriate button manually
+                    return;
+                }
+                else {
+                    OnCommand_doorcloseright( Train, Command );
+                }
+            }
+            else {
+                OnCommand_dooropenright( Train, Command );
+            }
+        }
+        else {
+            // close
+            if( ( Train->ggDoorAllOffButton.SubModel != nullptr )
+             && ( Train->ggDoorRightOffButton.SubModel == nullptr ) ) {
+                // OnCommand_doorcloseall( Train, Command );
+                // if two-button setup lacks dedicated closing button require the user to press appropriate button manually
+                return;
+            }
+            else {
+                OnCommand_doorcloseright( Train, Command );
+            }
+        }
+    }
+}
+
+void TTrain::OnCommand_dooropenright( TTrain *Train, command_data const &Command ) {
+
+    if( Command.action == GLFW_PRESS ) {
+        // NOTE: test how the door state check works with consists where the occupied vehicle doesn't have opening doors
+        if( Train->mvOccupied->DoorOpenCtrl != control_t::driver ) {
+            return;
+        }
+        if( Train->mvOccupied->ActiveCab == 1 ) {
+            Train->mvOccupied->DoorRight( true );
+        }
+        else {
+            // in the rear cab sides are reversed...
+            Train->mvOccupied->DoorLeft( true );
+        }
+        // visual feedback
+        if( Train->ggDoorRightOnButton.SubModel != nullptr ) {
+            // two separate impulse switches
+            Train->ggDoorRightOnButton.UpdateValue( 1.0, Train->dsbSwitch );
+        }
+        else {
+            // single two-state switch
+            Train->ggDoorRightButton.UpdateValue( 1.0, Train->dsbSwitch );
+        }
+    }
+    else if( Command.action == GLFW_RELEASE ) {
+        // visual feedback
+        if( Train->ggDoorRightOnButton.SubModel != nullptr ) {
+            // two separate impulse switches
+            Train->ggDoorRightOnButton.UpdateValue( 0.0, Train->dsbSwitch );
+        }
+    }
+}
+
+void TTrain::OnCommand_doorcloseright( TTrain *Train, command_data const &Command ) {
+
+    if( Command.action == GLFW_PRESS ) {
+
+        if( Train->mvOccupied->DoorCloseCtrl != control_t::driver ) {
+            return;
+        }
+
+        if( Train->mvOccupied->DoorClosureWarningAuto ) {
+            // automatic departure signal delays actual door closing until the button is released
+            Train->mvOccupied->signal_departure( true );
+        }
+        else {
+            // TODO: move door opening/closing to the update, so the switch animation doesn't hinge on door working
             if( Train->mvOccupied->ActiveCab == 1 ) {
                 Train->mvOccupied->DoorRight( false );
             }
@@ -3789,9 +3988,80 @@ void TTrain::OnCommand_doortoggleright( TTrain *Train, command_data const &Comma
                 // in the rear cab sides are reversed...
                 Train->mvOccupied->DoorLeft( false );
             }
-            // visual feedback
+        }
+        // visual feedback
+        if( Train->ggDoorRightOffButton.SubModel != nullptr ) {
+            // two separate switches to open and close the door
+            Train->ggDoorRightOffButton.UpdateValue( 1.0, Train->dsbSwitch );
+        }
+        else {
+            // single two-state switch
             Train->ggDoorRightButton.UpdateValue( 0.0, Train->dsbSwitch );
         }
+    }
+    else if( Command.action == GLFW_RELEASE ) {
+
+        if( Train->mvOccupied->DoorClosureWarningAuto ) {
+            // automatic departure signal delays actual door closing until the button is released
+            Train->mvOccupied->signal_departure( false );
+            // now we can actually close the door
+            if( Train->mvOccupied->ActiveCab == 1 ) {
+                Train->mvOccupied->DoorRight( false );
+            }
+            else {
+                // in the rear cab sides are reversed...
+                Train->mvOccupied->DoorLeft( false );
+            }
+        }
+        // visual feedback
+        // dedicated closing buttons are presumed to be impulse switches and return automatically to neutral position
+        if( Train->ggDoorRightOffButton.SubModel )
+            Train->ggDoorRightOffButton.UpdateValue( 0.0, Train->dsbSwitch );
+    }
+}
+
+void TTrain::OnCommand_doorcloseall( TTrain *Train, command_data const &Command ) {
+
+    if( Train->ggDoorAllOffButton.SubModel == nullptr ) {
+        // TODO: expand definition of cab controls so we can know if the control is present without testing for presence of 3d switch
+        if( Command.action == GLFW_PRESS ) {
+            WriteLog( "Close All Doors switch is missing, or wasn't defined" );
+        }
+        return;
+    }
+
+    if( Command.action == GLFW_PRESS ) {
+
+        if( Train->mvOccupied->DoorCloseCtrl != control_t::driver ) {
+            return;
+        }
+
+        if( Train->mvOccupied->DoorClosureWarningAuto ) {
+            // automatic departure signal delays actual door closing until the button is released
+            Train->mvOccupied->signal_departure( true );
+        }
+        else {
+            Train->mvOccupied->DoorRight( false );
+            Train->mvOccupied->DoorLeft( false );
+        }
+        // visual feedback
+        Train->ggDoorLeftButton.UpdateValue( 0.0, Train->dsbSwitch );
+        Train->ggDoorRightButton.UpdateValue( 0.0, Train->dsbSwitch );
+        if( Train->ggDoorAllOffButton.SubModel )
+            Train->ggDoorAllOffButton.UpdateValue( 1.0, Train->dsbSwitch );
+    }
+    else if( Command.action == GLFW_RELEASE ) {
+        // release the button
+        if( Train->mvOccupied->DoorClosureWarningAuto ) {
+            // automatic departure signal delays actual door closing until the button is released
+            Train->mvOccupied->signal_departure( false );
+            // now we can actually close the door
+            Train->mvOccupied->DoorRight( false );
+            Train->mvOccupied->DoorLeft( false );
+        }
+        // visual feedback
+        if( Train->ggDoorAllOffButton.SubModel )
+            Train->ggDoorAllOffButton.UpdateValue( 0.0 );
     }
 }
 
@@ -4325,13 +4595,13 @@ bool TTrain::Update( double const Deltatime )
 
     // update driver's position
     {
-        auto Vec = Global.pCamera->Velocity * -2.0;// -7.5 * Timer::GetDeltaRenderTime();
+        auto Vec = Global.pCamera.Velocity * -2.0;// -7.5 * Timer::GetDeltaRenderTime();
         Vec.y = -Vec.y;
         if( mvOccupied->ActiveCab < 0 ) {
             Vec *= -1.0f;
             Vec.y = -Vec.y;
         }
-        Vec.RotateY( Global.pCamera->Yaw );
+        Vec.RotateY( Global.pCamera.Yaw );
         vMechMovement = Vec;
     }
 
@@ -4562,8 +4832,8 @@ bool TTrain::Update( double const Deltatime )
         // hunter-080812: wyrzucanie szybkiego na elektrykach gdy nie ma napiecia przy dowolnym ustawieniu kierunkowego
         // Ra: to już jest w T_MoverParameters::TractionForce(), ale zależy od kierunku
         if( ( mvControlled->Mains )
-         && ( mvControlled->EngineType == TEngineType::ElectricSeriesMotor ) ) {
-            if( std::max( mvControlled->GetTrainsetVoltage(), std::fabs( mvControlled->RunningTraction.TractionVoltage ) ) < 0.5 * mvControlled->EnginePowerSource.MaxVoltage ) {
+         && ( mvControlled->EnginePowerSource.SourceType == TPowerSource::CurrentCollector ) ) {
+            if( std::max( mvControlled->GetTrainsetVoltage(), std::abs( mvControlled->RunningTraction.TractionVoltage ) ) < 0.5 * mvControlled->EnginePowerSource.MaxVoltage ) {
                 // TODO: check whether it should affect entire consist for EMU
                 // TODO: check whether it should happen if there's power supplied alternatively through hvcouplers
                 // TODO: potentially move this to the mover module, as there isn't much reason to have this dependent on the operator presence
@@ -5229,6 +5499,11 @@ bool TTrain::Update( double const Deltatime )
         // NBMX wrzesien 2003 - drzwi
         ggDoorLeftButton.Update();
         ggDoorRightButton.Update();
+        ggDoorLeftOnButton.Update();
+        ggDoorRightOnButton.Update();
+        ggDoorLeftOffButton.Update();
+        ggDoorRightOffButton.Update();
+        ggDoorAllOffButton.Update();
         ggDoorSignallingButton.Update();
         // NBMX dzwignia sprezarki
         ggCompressorButton.Update();
@@ -5352,24 +5627,28 @@ bool TTrain::Update( double const Deltatime )
         }
         case 1: {
             //światło wewnętrzne przygaszone (255 216 176)
-            if( mvOccupied->ConverterFlag == true ) {
-                // jasnosc dla zalaczonej przetwornicy
-                DynamicObject->InteriorLightLevel = 0.4f;
-            }
-            else {
-                DynamicObject->InteriorLightLevel = 0.2f;
-            }
+            auto const converteractive { (
+                ( mvOccupied->ConverterFlag )
+             || ( ( ( mvOccupied->Couplers[ side::front ].CouplingFlag & coupling::permanent ) != 0 ) && mvOccupied->Couplers[ side::front ].Connected->ConverterFlag )
+             || ( ( ( mvOccupied->Couplers[ side::rear  ].CouplingFlag & coupling::permanent ) != 0 ) && mvOccupied->Couplers[ side::rear  ].Connected->ConverterFlag ) ) };
+
+            DynamicObject->InteriorLightLevel = (
+                converteractive ?
+                    0.4f :
+                    0.2f );
             break;
         }
         case 2: {
             //światło wewnętrzne zapalone (255 216 176)
-            if( mvOccupied->ConverterFlag == true ) {
-                // jasnosc dla zalaczonej przetwornicy
-                DynamicObject->InteriorLightLevel = 1.0f;
-            }
-            else {
-                DynamicObject->InteriorLightLevel = 0.5f;
-            }
+            auto const converteractive { (
+                ( mvOccupied->ConverterFlag )
+             || ( ( ( mvOccupied->Couplers[ side::front ].CouplingFlag & coupling::permanent ) != 0 ) && mvOccupied->Couplers[ side::front ].Connected->ConverterFlag )
+             || ( ( ( mvOccupied->Couplers[ side::rear  ].CouplingFlag & coupling::permanent ) != 0 ) && mvOccupied->Couplers[ side::rear  ].Connected->ConverterFlag ) ) };
+
+            DynamicObject->InteriorLightLevel = (
+                converteractive ?
+                    1.0f :
+                    0.5f );
             break;
         }
     }
@@ -5947,8 +6226,8 @@ bool TTrain::InitializeCab(int NewCabNo, std::string const &asFileName)
     }
     // reset view angles
     pMechViewAngle = { 0.0, 0.0 };
-    Global.pCamera->Pitch = pMechViewAngle.x;
-    Global.pCamera->Yaw = pMechViewAngle.y;
+    Global.pCamera.Pitch = pMechViewAngle.x;
+    Global.pCamera.Yaw = pMechViewAngle.y;
 
     pyScreens.reset(this);
     pyScreens.setLookupPath(DynamicObject->asBaseDir);
@@ -5969,7 +6248,7 @@ bool TTrain::InitializeCab(int NewCabNo, std::string const &asFileName)
     }
     std::string cabstr("cab" + std::to_string(cabindex) + "definition:");
 
-    std::shared_ptr<cParser> parser = std::make_shared<cParser>(asFileName, cParser::buffer_FILE);
+    cParser parser(asFileName, cParser::buffer_FILE);
     // NOTE: yaml-style comments are disabled until conflict in use of # is resolved
     // parser.addCommentStyle( "#", "\n" );
     std::string token;
@@ -5977,11 +6256,45 @@ bool TTrain::InitializeCab(int NewCabNo, std::string const &asFileName)
     {
         // szukanie kabiny
         token = "";
-        parser->getTokens();
-        *parser >> token;
+        parser.getTokens();
+        parser >> token;
+/*
+        if( token == "locations:" ) {
+            do {
+                token = "";
+                parser.getTokens(); parser >> token;
 
+                if( token == "radio:" ) {
+                    // point in 3d space, in format [ x, y, z ]
+                    glm::vec3 radiolocation;
+                    parser.getTokens( 3, false, "\n\r\t ,;[]" );
+                    parser
+                        >> radiolocation.x
+                        >> radiolocation.y
+                        >> radiolocation.z;
+                    radiolocation *= glm::vec3( NewCabNo, 1, NewCabNo );
+                    m_radiosound.offset( radiolocation );
+                }
+
+                else if( token == "alerter:" ) {
+                    // point in 3d space, in format [ x, y, z ]
+                    glm::vec3 alerterlocation;
+                    parser.getTokens( 3, false, "\n\r\t ,;[]" );
+                    parser
+                        >> alerterlocation.x
+                        >> alerterlocation.y
+                        >> alerterlocation.z;
+                    alerterlocation *= glm::vec3( NewCabNo, 1, NewCabNo );
+                    dsbBuzzer.offset( alerterlocation );
+                }
+
+            } while( ( token != "" )
+                  && ( token != "endlocations" ) );
+
+        } // locations:
+*/
     } while ((token != "") && (token != cabstr));
-
+/*
     if ((cabindex != 1) && (token != cabstr))
     {
         // jeśli nie znaleziony wpis kabiny, próba szukania kabiny 1
@@ -5993,65 +6306,66 @@ bool TTrain::InitializeCab(int NewCabNo, std::string const &asFileName)
         do
         {
             token = "";
-            parser->getTokens();
-            *parser >> token;
+            parser.getTokens();
+            parser >> token;
         } while ((token != "") && (token != cabstr));
     }
+*/
     if (token == cabstr)
     {
         // jeśli znaleziony wpis kabiny
-        Cabine[cabindex].Load(*parser);
+        Cabine[cabindex].Load(parser);
         // NOTE: the position and angle definitions depend on strict entry order
         // TODO: refactor into more flexible arrangement
-        parser->getTokens();
-        *parser >> token;
+        parser.getTokens();
+        parser >> token;
         if( token == std::string( "driver" + std::to_string( cabindex ) + "angle:" ) ) {
             // camera view angle
-            parser->getTokens( 2, false );
+            parser.getTokens( 2, false );
             // angle is specified in degrees but internally stored in radians
             glm::vec2 viewangle;
-            *parser
+            parser
                 >> viewangle.y // yaw first, then pitch
                 >> viewangle.x;
             pMechViewAngle = glm::radians( viewangle );
-            Global.pCamera->Pitch = pMechViewAngle.x;
-            Global.pCamera->Yaw = pMechViewAngle.y;
+            Global.pCamera.Pitch = pMechViewAngle.x;
+            Global.pCamera.Yaw = pMechViewAngle.y;
 
-            parser->getTokens();
-            *parser >> token;
+            parser.getTokens();
+            parser >> token;
         }
         if (token == std::string("driver" + std::to_string(cabindex) + "pos:"))
         {
             // pozycja poczatkowa maszynisty
-            parser->getTokens(3, false);
-            *parser
+            parser.getTokens(3, false);
+            parser
                 >> pMechOffset.x
                 >> pMechOffset.y
                 >> pMechOffset.z;
             pMechSittingPosition = pMechOffset;
 
-            parser->getTokens();
-            *parser >> token;
+            parser.getTokens();
+            parser >> token;
         }
         // ABu: pozycja siedzaca mechanika
         if (token == std::string("driver" + std::to_string(cabindex) + "sitpos:"))
         {
             // ABu 180404 pozycja siedzaca maszynisty
-            parser->getTokens(3, false);
-            *parser
+            parser.getTokens(3, false);
+            parser
                 >> pMechSittingPosition.x
                 >> pMechSittingPosition.y
                 >> pMechSittingPosition.z;
 
-            parser->getTokens();
-            *parser >> token;
+            parser.getTokens();
+            parser >> token;
         }
         // else parse=false;
         do {
             if( parse == true ) {
                 token = "";
-                parser->getTokens();
-                *parser >> token;
+                parser.getTokens();
+                parser >> token;
             }
             else {
                 parse = true;
@@ -6064,8 +6378,8 @@ bool TTrain::InitializeCab(int NewCabNo, std::string const &asFileName)
             if (token == std::string("cab" + std::to_string(cabindex) + "model:"))
             {
                 // model kabiny
-                parser->getTokens();
-                *parser >> token;
+                parser.getTokens();
+                parser >> token;
                 if (token != "none")
                 {
                     // bieżąca sciezka do tekstur to dynamic/...
@@ -6101,19 +6415,19 @@ bool TTrain::InitializeCab(int NewCabNo, std::string const &asFileName)
                 // don't bother with other parts until the cab is initialised
                 continue;
             }
-            else if (true == initialize_gauge(*parser, token, cabindex))
+            else if (true == initialize_gauge(parser, token, cabindex))
             {
                 // matched the token, grab the next one
                 continue;
             }
-            else if (true == initialize_button(*parser, token, cabindex))
+            else if (true == initialize_button(parser, token, cabindex))
             {
                 // matched the token, grab the next one
                 continue;
             }
             else if (token == "pyscreen:")
             {
-                pyScreens.init(*parser, DynamicObject->mdKabina, DynamicObject->name(), NewCabNo);
+                pyScreens.init(parser, DynamicObject->mdKabina, DynamicObject->name(), NewCabNo);
             }
             // btLampkaUnknown.Init("unknown",mdKabina,false);
         } while (token != "");
@@ -6141,10 +6455,10 @@ bool TTrain::InitializeCab(int NewCabNo, std::string const &asFileName)
         }
         // radio has two potential items which can provide the position
         if( m_radiosound.offset() == nullvector ) {
-            m_radiosound.offset( ggRadioButton.model_offset() );
+            m_radiosound.offset( btLampkaRadio.model_offset() );
         }
         if( m_radiosound.offset() == nullvector ) {
-            m_radiosound.offset( btLampkaRadio.model_offset() );
+            m_radiosound.offset( ggRadioButton.model_offset() );
         }
         if( m_radiostop.offset() == nullvector ) {
             m_radiostop.offset( m_radiosound.offset() );
@@ -6389,6 +6703,11 @@ void TTrain::clear_cab_controls()
     ggRadioTest.Clear();
     ggDoorLeftButton.Clear();
     ggDoorRightButton.Clear();
+    ggDoorLeftOnButton.Clear();
+    ggDoorRightOnButton.Clear();
+    ggDoorLeftOffButton.Clear();
+    ggDoorRightOffButton.Clear();
+    ggDoorAllOffButton.Clear();
     ggTrainHeatingButton.Clear();
     ggSignallingButton.Clear();
     ggDoorSignallingButton.Clear();
@@ -6906,6 +7225,11 @@ bool TTrain::initialize_gauge(cParser &Parser, std::string const &Label, int con
         { "stlinoff_bt:", ggStLinOffButton },
         { "door_left_sw:", ggDoorLeftButton },
         { "door_right_sw:", ggDoorRightButton },
+        { "doorlefton_sw:", ggDoorLeftOnButton },
+        { "doorrighton_sw:", ggDoorRightOnButton },
+        { "doorleftoff_sw:", ggDoorLeftOffButton },
+        { "doorrightoff_sw:", ggDoorRightOffButton },
+        { "dooralloff_sw:", ggDoorAllOffButton },
         { "departure_signal_bt:", ggDepartureSignalButton },
         { "upperlight_sw:", ggUpperLightButton },
         { "leftlight_sw:", ggLeftLightButton },
