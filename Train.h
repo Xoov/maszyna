@@ -408,6 +408,7 @@ public: // reszta może by?publiczna
     TGauge ggHornLowButton;
     TGauge ggHornHighButton;
     TGauge ggWhistleButton;
+	TGauge ggHelperButton;
     TGauge ggNextCurrentButton;
 
     std::array<TGauge, 10> ggUniversals; // NOTE: temporary arrangement until we have dynamically built control table

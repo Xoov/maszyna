@@ -5593,6 +5593,8 @@ bool TTrain::Update( double const Deltatime )
         ggHornLowButton.Update();
         ggHornHighButton.Update();
         ggWhistleButton.Update();
+		ggHelperButton.UpdateValue(DynamicObject->Mechanik->HelperState);
+		ggHelperButton.Update();
         for( auto &universal : ggUniversals ) {
             universal.Update();
         }
@@ -6682,6 +6684,7 @@ void TTrain::clear_cab_controls()
     ggHornLowButton.Clear();
     ggHornHighButton.Clear();
     ggWhistleButton.Clear();
+	ggHelperButton.Clear();
     ggNextCurrentButton.Clear();
     for( auto &universal : ggUniversals ) {
         universal.Clear();
@@ -7220,6 +7223,7 @@ bool TTrain::initialize_gauge(cParser &Parser, std::string const &Label, int con
         { "hornlow_bt:", ggHornLowButton },
         { "hornhigh_bt:", ggHornHighButton },
         { "whistle_bt:", ggWhistleButton },
+		{ "helper_bt:", ggHelperButton },
         { "fuse_bt:", ggFuseButton },
         { "converterfuse_bt:", ggConverterFuseButton },
         { "stlinoff_bt:", ggStLinOffButton },
