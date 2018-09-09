@@ -20,6 +20,7 @@ http://mozilla.org/MPL/2.0/.
 #include "sceneeditor.h"
 #include "renderer.h"
 #include "uilayer.h"
+#include "translation.h"
 #include "logs.h"
 
 #ifdef EU07_BUILD_STATIC
@@ -109,6 +110,9 @@ eu07_application::init( int Argc, char *Argv[] ) {
     if( ( result = init_settings( Argc, Argv ) ) != 0 ) {
         return result;
     }
+    if( ( result = init_locale() ) != 0 ) {
+        return result;
+    }
 
     WriteLog( "Starting MaSzyna rail vehicle simulator (release: " + Global.asVersion + ")" );
     WriteLog( "For online documentation and additional files refer to: http://eu07.pl" );
@@ -152,6 +156,8 @@ eu07_application::exit() {
 
     SafeDelete( simulation::Train );
     SafeDelete( simulation::Region );
+
+    ui_layer::shutdown();
 
     glfwDestroyWindow( m_window );
     glfwTerminate();
@@ -362,6 +368,14 @@ eu07_application::init_settings( int Argc, char *Argv[] ) {
             return -1;
         }
     }
+
+    return 0;
+}
+
+int
+eu07_application::init_locale() {
+
+    locale::init();
 
     return 0;
 }

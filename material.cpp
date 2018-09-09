@@ -34,11 +34,12 @@ opengl_material::deserialize( cParser &Input, bool const Loadnow ) {
 bool
 opengl_material::deserialize_mapping( cParser &Input, int const Priority, bool const Loadnow ) {
     // token can be a key or block end
-    std::string const key { Input.getToken<std::string>( true, "\n\r\t  ,;[]" ) };
+    std::string const key { Input.getToken<std::string>( true, "\n\r\t  ;[]" ) };
 
     if( ( true == key.empty() ) || ( key == "}" ) ) { return false; }
 
-    auto const value { Input.getToken<std::string>( true, "\n\r\t ,;" ) };
+    // NOTE: comma can be part of legacy file names, so we don't treat it as a separator here
+    auto const value { Input.getToken<std::string>( true, "\n\r\t ;" ) };
 
     if( Priority != -1 ) {
         // regular attribute processing mode

@@ -409,6 +409,9 @@ opengl_renderer::Render() {
     m_debugstats = debug_stats();
     Render_pass( rendermode::color );
     Timer::subsystem.gfx_color.stop();
+    // add user interface
+    setup_units( true, false, false );
+    Application.render_ui();
 
     Timer::subsystem.gfx_swap.start();
     glfwSwapBuffers( m_window );
@@ -416,15 +419,19 @@ opengl_renderer::Render() {
 
     m_drawcount = m_cellqueue.size();
     m_debugtimestext
-        += "frame: " + to_string( Timer::subsystem.gfx_color.average(), 2 ) + " msec (" + std::to_string( m_cellqueue.size() ) + " sectors) "
-        += "gpu side: " + to_string( Timer::subsystem.gfx_swap.average(), 2 ) + " msec "
-        += "(" + to_string( Timer::subsystem.gfx_color.average() + Timer::subsystem.gfx_swap.average(), 2 ) + " msec total)";
+        += "color: " + to_string( Timer::subsystem.gfx_color.average(), 2 ) + " msec (" + std::to_string( m_cellqueue.size() ) + " sectors)\n"
+        += "gpu side: " + to_string( Timer::subsystem.gfx_swap.average(), 2 ) + " msec\n"
+        += "frame total: " + to_string( Timer::subsystem.gfx_color.average() + Timer::subsystem.gfx_swap.average(), 2 ) + " msec";
 
     m_debugstatstext =
-        "drawcalls: " + to_string( m_debugstats.drawcalls )
-        + "; dyn: " + to_string( m_debugstats.dynamics ) + " mod: " + to_string( m_debugstats.models ) + " sub: " + to_string( m_debugstats.submodels )
-        + "; trk: " + to_string( m_debugstats.paths ) + " shp: " + to_string( m_debugstats.shapes )
-        + " trc: " + to_string( m_debugstats.traction ) + " lin: " + to_string( m_debugstats.lines );
+        "drawcalls:  " + to_string( m_debugstats.drawcalls ) + "\n"
+        + " vehicles:  " + to_string( m_debugstats.dynamics ) + "\n"
+        + " models:    " + to_string( m_debugstats.models ) + "\n"
+        + " submodels: " + to_string( m_debugstats.submodels ) + "\n"
+        + " paths:     " + to_string( m_debugstats.paths ) + "\n"
+        + " shapes:    " + to_string( m_debugstats.shapes ) + "\n"
+        + " traction:  " + to_string( m_debugstats.traction ) + "\n"
+        + " lines:     " + to_string( m_debugstats.lines );
 
     ++m_framestamp;
 
@@ -463,7 +470,7 @@ opengl_renderer::Render_pass( rendermode const Mode ) {
                     Render_pass( rendermode::cabshadows );
                 }
                 Timer::subsystem.gfx_shadows.stop();
-                m_debugtimestext += "shadows: " + to_string( Timer::subsystem.gfx_shadows.average(), 2 ) + " msec (" + std::to_string( m_cellqueue.size() ) + " sectors) ";
+                m_debugtimestext += "shadows: " + to_string( Timer::subsystem.gfx_shadows.average(), 2 ) + " msec (" + std::to_string( m_cellqueue.size() ) + " sectors)\n";
 #ifdef EU07_USE_DEBUG_SHADOWMAP
                 UILayer.set_texture( m_shadowdebugtexture );
 #endif
@@ -584,7 +591,6 @@ opengl_renderer::Render_pass( rendermode const Mode ) {
                     ::glMatrixMode( GL_MODELVIEW );
                 }
             }
-            Application.render_ui();
             break;
         }
 
@@ -1410,13 +1416,8 @@ opengl_renderer::Render( world_environment *Environment ) {
     ::glDisable( GL_DEPTH_TEST );
     ::glDepthMask( GL_FALSE );
     ::glPushMatrix();
-
     // skydome
     Environment->m_skydome.Render();
-    if( true == Global.bUseVBO ) {
-        // skydome uses a custom vbo which could potentially confuse the main geometry system. hardly elegant but, eh
-        gfx::opengl_vbogeometrybank::reset();
-    }
     // stars
     if( Environment->m_stars.m_stars != nullptr ) {
         // setup
@@ -1430,7 +1431,6 @@ opengl_renderer::Render( world_environment *Environment ) {
         ::glPointSize( 3.f );
         ::glPopMatrix();
     }
-
     // celestial bodies
     float const duskfactor = 1.0f - clamp( std::abs( Environment->m_sun.getAngle() ), 0.0f, 12.0f ) / 12.0f;
     glm::vec3 suncolor = interpolate(
@@ -1521,29 +1521,29 @@ opengl_renderer::Render( world_environment *Environment ) {
     }
     ::glPopAttrib();
 
+    m_sunlight.apply_angle();
+    m_sunlight.apply_intensity();
+
     // clouds
     if( Environment->m_clouds.mdCloud ) {
         // setup
         Disable_Lights();
         ::glEnable( GL_LIGHTING );
+        ::glEnable( GL_LIGHT0 ); // other lights will be enabled during lights update
         ::glLightModelfv(
             GL_LIGHT_MODEL_AMBIENT,
             glm::value_ptr(
                 interpolate( Environment->m_skydome.GetAverageColor(), suncolor, duskfactor * 0.25f )
                 * interpolate( 1.f, 0.35f, Global.Overcast / 2.f ) // overcast darkens the clouds
-                * 2.5f // arbitrary adjustment factor
+                * 0.5f // arbitrary adjustment factor
             ) );
         // render
         Render( Environment->m_clouds.mdCloud, nullptr, 100.0 );
         Render_Alpha( Environment->m_clouds.mdCloud, nullptr, 100.0 );
         // post-render cleanup
         ::glLightModelfv( GL_LIGHT_MODEL_AMBIENT, glm::value_ptr( colors::none ) );
-        ::glEnable( GL_LIGHT0 ); // other lights will be enabled during lights update
         ::glDisable( GL_LIGHTING );
     }
-
-    m_sunlight.apply_angle();
-    m_sunlight.apply_intensity();
 
     ::glPopMatrix();
     ::glDepthMask( GL_TRUE );
@@ -2151,7 +2151,7 @@ opengl_renderer::Render( TDynamicObject *Dynamic ) {
                 Render( Dynamic->mdModel, Dynamic->Material(), squaredistance );
 
             if( Dynamic->mdLoad ) // renderowanie nieprzezroczystego ładunku
-                Render( Dynamic->mdLoad, Dynamic->Material(), squaredistance );
+                Render( Dynamic->mdLoad, Dynamic->Material(), squaredistance, { 0.f, Dynamic->LoadOffset, 0.f }, {} );
 
             // post-render cleanup
             m_renderspecular = false;
@@ -2407,7 +2407,17 @@ opengl_renderer::Render( TSubModel *Submodel ) {
 
                         // main draw call
                         m_geometry.draw( Submodel->m_geometry );
-
+/*
+                        if( DebugModeFlag ) {
+                            auto const & vertices { m_geometry.vertices( Submodel->m_geometry ) };
+                            ::glBegin( GL_LINES );
+                            for( auto const &vertex : vertices ) {
+                                ::glVertex3fv( glm::value_ptr( vertex.position ) );
+                                ::glVertex3fv( glm::value_ptr( vertex.position + vertex.normal * 0.2f ) );
+                            }
+                            ::glEnd();
+                        }
+*/
                         // post-draw reset
                         if( ( true == m_renderspecular ) && ( m_sunlight.specular.a > 0.01f ) ) {
                             ::glMaterialfv( GL_FRONT, GL_SPECULAR, glm::value_ptr( colors::none ) );
@@ -3086,7 +3096,7 @@ opengl_renderer::Render_Alpha( TDynamicObject *Dynamic ) {
         Render_Alpha( Dynamic->mdModel, Dynamic->Material(), squaredistance );
 
     if( Dynamic->mdLoad ) // renderowanie nieprzezroczystego ładunku
-        Render_Alpha( Dynamic->mdLoad, Dynamic->Material(), squaredistance );
+        Render_Alpha( Dynamic->mdLoad, Dynamic->Material(), squaredistance, { 0.f, Dynamic->LoadOffset, 0.f }, {} );
 
     // post-render cleanup
     m_renderspecular = false;
@@ -3508,7 +3518,31 @@ opengl_renderer::Update_Mouse_Position() {
 
 void
 opengl_renderer::Update( double const Deltatime ) {
+/*
+    m_pickupdateaccumulator += Deltatime;
 
+    if( m_updateaccumulator > 0.5 ) {
+
+        m_pickupdateaccumulator = 0.0;
+
+        if( ( true  == Global.ControlPicking )
+         && ( false == FreeFlyModeFlag ) ) {
+            Update_Pick_Control();
+        }
+        else {
+            m_pickcontrolitem = nullptr;
+        }
+        // temporary conditions for testing. eventually will be coupled with editor mode
+        if( ( true == Global.ControlPicking )
+         && ( true == DebugModeFlag ) 
+         && ( true == FreeFlyModeFlag ) ) {
+            Update_Pick_Node();
+        }
+        else {
+            m_picksceneryitem = nullptr;
+        }
+    }
+*/
     m_updateaccumulator += Deltatime;
 
     if( m_updateaccumulator < 1.0 ) {

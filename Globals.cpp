@@ -127,7 +127,7 @@ global_settings::ConfigParse(cParser &Parser) {
             // selected device for audio renderer
             Parser.getTokens();
             Parser >> AudioVolume;
-            AudioVolume = clamp( AudioVolume, 1.f, 4.f );
+            AudioVolume = clamp( AudioVolume, 0.0f, 2.f );
         }
         // else if (str==AnsiString("renderalpha")) //McZapkie-1312302 - dwuprzebiegowe renderowanie
         // bRenderAlpha=(GetNextSymbol().LowerCase()==AnsiString("yes"));
@@ -592,6 +592,12 @@ global_settings::ConfigParse(cParser &Parser) {
             glm::clamp( UITextColor, 0.f, 255.f );
             UITextColor = UITextColor / 255.f;
             UITextColor.a = 1.f;
+        }
+        else if( token == "ui.bg.opacity" ) {
+            // czy grupować eventy o tych samych nazwach
+            Parser.getTokens();
+            Parser >> UIBgOpacity;
+            UIBgOpacity = clamp( UIBgOpacity, 0.f, 1.f );
         }
         else if( token == "input.gamepad" ) {
             // czy grupować eventy o tych samych nazwach

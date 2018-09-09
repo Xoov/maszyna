@@ -142,6 +142,8 @@ class TTrain
     void set_paired_open_motor_connectors_button( bool const State );
     // update function subroutines
     void update_sounds( double const Deltatime );
+    void update_sounds_runningnoise( sound_source &Sound );
+    void update_sounds_radio();
 
     // command handlers
     // NOTE: we're currently using universal handlers and static handler map but it may be beneficial to have these implemented on individual class instance basis
@@ -573,6 +575,7 @@ public: // reszta może by?publiczna
         float fadein_end { 0.f }; // full effect speed in km/h
     } HuntingShake;
     float HuntingAngle { 0.f }; // crude approximation of hunting oscillation; current angle of sine wave
+    bool IsHunting { false };
 
     sound_source dsbReverserKey { sound_placement::internal, EU07_SOUND_CABCONTROLSCUTOFFRANGE }; // hunter-121211
     sound_source dsbNastawnikJazdy { sound_placement::internal, EU07_SOUND_CABCONTROLSCUTOFFRANGE };
@@ -592,12 +595,13 @@ public: // reszta może by?publiczna
 
     sound_source rsFadeSound { sound_placement::internal, EU07_SOUND_CABCONTROLSCUTOFFRANGE };
     sound_source rsRunningNoise{ sound_placement::internal, EU07_SOUND_GLOBALRANGE };
+    sound_source rsHuntingNoise{ sound_placement::internal, EU07_SOUND_GLOBALRANGE };
 
     sound_source dsbHasler { sound_placement::internal, EU07_SOUND_CABCONTROLSCUTOFFRANGE };
     sound_source dsbBuzzer { sound_placement::internal, EU07_SOUND_CABCONTROLSCUTOFFRANGE };
     sound_source dsbSlipAlarm { sound_placement::internal, EU07_SOUND_CABCONTROLSCUTOFFRANGE }; // Bombardier 011010: alarm przy poslizgu dla 181/182
     sound_source m_radiosound { sound_placement::internal, 2 * EU07_SOUND_CABCONTROLSCUTOFFRANGE }; // cached template for radio messages
-    std::vector<sound_source> m_radiomessages; // list of currently played radio messages
+    std::vector<std::pair<int, std::shared_ptr<sound_source>>> m_radiomessages; // list of currently played radio messages
     sound_source m_radiostop { sound_placement::internal, EU07_SOUND_CABCONTROLSCUTOFFRANGE };
 
     int iCabLightFlag; // McZapkie:120503: oswietlenie kabiny (0: wyl, 1: przyciemnione, 2: pelne)

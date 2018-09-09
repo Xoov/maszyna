@@ -621,26 +621,26 @@ TDynamicObject::toggle_lights() {
 
     if( true == SectionLightsActive ) {
         // switch all lights off
-        for( auto &sectionlight : SectionLightLevels ) {
-            sectionlight.level = 0.0f;
+        for( auto &section : Sections ) {
+            section.light_level = 0.0f;
         }
         SectionLightsActive = false;
     }
     else {
         // set lights with probability depending on the compartment type. TODO: expose this in .mmd file
-        for( auto &sectionlight : SectionLightLevels ) {
+        for( auto &section : Sections ) {
 
-            std::string const &compartmentname = sectionlight.compartment->pName;
-            if( ( compartmentname.find( "corridor" ) == 0 )
-             || ( compartmentname.find( "korytarz" ) == 0 ) ) {
+            auto const sectionname { section.compartment->pName };
+            if( ( sectionname.find( "corridor" ) == 0 )
+             || ( sectionname.find( "korytarz" ) == 0 ) ) {
                 // corridors are lit 100% of time
-                sectionlight.level = 0.75f;
+                section.light_level = 0.75f;
             }
             else if(
-                ( compartmentname.find( "compartment" ) == 0 )
-             || ( compartmentname.find( "przedzial" )   == 0 ) ) {
+                ( sectionname.find( "compartment" ) == 0 )
+             || ( sectionname.find( "przedzial" )   == 0 ) ) {
                 // compartments are lit with 75% probability
-                sectionlight.level = ( Random() < 0.75 ? 0.75f : 0.15f );
+                section.light_level = ( Random() < 0.75 ? 0.75f : 0.15f );
             }
         }
         SectionLightsActive = true;
@@ -970,7 +970,8 @@ void TDynamicObject::ABuLittleUpdate(double ObjSqrDist)
         }
         
 		if( ( Mechanik != nullptr )
-         && ( Mechanik->GetAction() != TAction::actSleep ) ) {
+         && ( ( Mechanik->GetAction() != TAction::actSleep )
+           || ( MoverParameters->Battery ) ) ) {
             // rysowanie figurki mechanika
             btMechanik1.Turn( MoverParameters->ActiveCab > 0 );
             btMechanik2.Turn( MoverParameters->ActiveCab < 0 );
@@ -1023,10 +1024,10 @@ void TDynamicObject::ABuLittleUpdate(double ObjSqrDist)
         // else btHeadSignals23.TurnOff();
     }
     // interior light levels
-    for( auto const &section : SectionLightLevels ) {
-        section.compartment->SetLightLevel( section.level, true );
+    for( auto const &section : Sections ) {
+        section.compartment->SetLightLevel( section.light_level, true );
         if( section.load != nullptr ) {
-            section.load->SetLightLevel( section.level, true );
+            section.load->SetLightLevel( section.light_level, true );
         }
     }
     // load chunks visibility
@@ -2160,35 +2161,21 @@ TDynamicObject::Init(std::string Name, // nazwa pojazdu, np. "EU07-424"
         // check the low poly interior for potential compartments of interest, ie ones which can be individually lit
         // TODO: definition of relevant compartments in the .mmd file
         TSubModel *submodel { nullptr };
-        if( ( submodel = mdLowPolyInt->GetFromName( "cab1" ) ) != nullptr ) { SectionLightLevels.push_back( { submodel, nullptr, 0.0f } ); }
-        if( ( submodel = mdLowPolyInt->GetFromName( "cab2" ) ) != nullptr ) { SectionLightLevels.push_back( { submodel, nullptr, 0.0f } ); }
-        if( ( submodel = mdLowPolyInt->GetFromName( "cab0" ) ) != nullptr ) { SectionLightLevels.push_back( { submodel, nullptr, 0.0f } ); }
+        if( ( submodel = mdLowPolyInt->GetFromName( "cab1" ) ) != nullptr ) { Sections.push_back( { submodel, nullptr, 0.0f } ); }
+        if( ( submodel = mdLowPolyInt->GetFromName( "cab2" ) ) != nullptr ) { Sections.push_back( { submodel, nullptr, 0.0f } ); }
+        if( ( submodel = mdLowPolyInt->GetFromName( "cab0" ) ) != nullptr ) { Sections.push_back( { submodel, nullptr, 0.0f } ); }
         // passenger car compartments
         std::vector<std::string> nameprefixes = { "corridor", "korytarz", "compartment", "przedzial" };
-        int compartmentindex;
-        std::string compartmentname;
         for( auto const &nameprefix : nameprefixes ) {
-            compartmentindex = 0;
-            do {
-                compartmentname =
-                    nameprefix + (
-                    compartmentindex < 10 ?
-                        "0" + std::to_string( compartmentindex ) :
-                              std::to_string( compartmentindex ) );
-                submodel = mdLowPolyInt->GetFromName( compartmentname );
-                if( submodel != nullptr ) {
-                    SectionLightLevels.push_back( {
-                        submodel,
-                        nullptr, // pointers to load sections are generated afterwards
-                        0.0f } );
-                }
-                ++compartmentindex;
-            } while( ( submodel != nullptr )
-                  || ( compartmentindex < 2 ) ); // chain can start from prefix00 or prefix01
+            init_sections( mdLowPolyInt, nameprefix );
         }
-        update_load_sections();
-        update_load_visibility();
     }
+    // 'external_load' is an optional special section in the main model, pointing to submodel of external load
+    if( mdModel ) {
+        init_sections( mdModel, "external_load" );
+    }
+    update_load_sections();
+    update_load_visibility();
     // wyszukiwanie zderzakow
     if( mdModel ) {
         // jeśli ma w czym szukać
@@ -2274,6 +2261,35 @@ TDynamicObject::Init(std::string Name, // nazwa pojazdu, np. "EU07-424"
 
     // długość większa od zera oznacza OK; 2mm docisku?
     return MoverParameters->Dim.L;
+}
+
+int
+TDynamicObject::init_sections( TModel3d const *Model, std::string const &Nameprefix ) {
+
+    std::string sectionname;
+    auto sectioncount = 0;
+    auto sectionindex = 0;
+    TSubModel *sectionsubmodel { nullptr };
+
+    do {
+        sectionname =
+            Nameprefix + (
+            sectionindex < 10 ?
+                "0" + std::to_string( sectionindex ) :
+                      std::to_string( sectionindex ) );
+        sectionsubmodel = Model->GetFromName( sectionname );
+        if( sectionsubmodel != nullptr ) {
+            Sections.push_back( {
+                sectionsubmodel,
+                nullptr, // pointers to load sections are generated afterwards
+                0.0f } );
+            ++sectioncount;
+        }
+        ++sectionindex;
+    } while( ( sectionsubmodel != nullptr )
+          || ( sectionindex < 2 ) ); // chain can start from prefix00 or prefix01
+
+    return sectioncount;
 }
 
 void
@@ -2579,6 +2595,9 @@ void TDynamicObject::LoadExchange( int const Disembark, int const Embark, int co
 // update state of load exchange operation
 void TDynamicObject::update_exchange( double const Deltatime ) {
 
+    // TODO: move offset calculation after initial check, when the loading system is all unified
+    update_load_offset();
+
     if( ( m_exchange.unload_count < 0.01 ) && ( m_exchange.load_count < 0.01 ) ) { return; }
 
     if( ( MoverParameters->Vel < 2.0 )
@@ -2685,7 +2704,7 @@ TDynamicObject::update_load_sections() {
 
     SectionLoadVisibility.clear();
 
-    for( auto &section : SectionLightLevels ) {
+    for( auto &section : Sections ) {
 
         section.load = (
             mdLoad != nullptr ?
@@ -2736,6 +2755,19 @@ TDynamicObject::update_load_visibility() {
             } } );
 }
 
+void
+TDynamicObject::update_load_offset() {
+
+    if( MoverParameters->LoadMinOffset == 0.f ) { return; }
+
+    auto const loadpercentage { (
+        MoverParameters->MaxLoad == 0.0 ?
+            0.0 :
+            100.0 * MoverParameters->Load / MoverParameters->MaxLoad ) };
+
+    LoadOffset = interpolate( MoverParameters->LoadMinOffset, 0.f, clamp( 0.0, 1.0, loadpercentage * 0.01 ) );
+}
+
 void 
 TDynamicObject::shuffle_load_sections() {
 
@@ -2747,6 +2779,8 @@ TDynamicObject::shuffle_load_sections() {
             return (
                 ( section.submodel->pName.find( "compartment" ) == 0 )
              || ( section.submodel->pName.find( "przedzial" )   == 0 ) ); } );
+    // NOTE: potentially we're left with a mix of corridor and external section loads
+    // but that's not necessarily a wrong outcome, so we leave it this way for the time being
 }
 
 /*
@@ -3806,10 +3840,11 @@ bool TDynamicObject::Update(double dt, double dt1)
         MoverParameters->DerailReason = 0; //żeby tylko raz
     }
 
-    update_exchange( dt );
-    if (MoverParameters->LoadStatus)
+    if( MoverParameters->LoadStatus ) {
         LoadUpdate(); // zmiana modelu ładunku
-	
+    }
+    update_exchange( dt );
+
 	return true; // Ra: chyba tak?
 }
 
@@ -3847,9 +3882,11 @@ bool TDynamicObject::FastUpdate(double dt)
     // ResetdMoveLen();
     FastMove(dDOMoveLen);
 
-    update_exchange( dt );
-    if (MoverParameters->LoadStatus)
+    if( MoverParameters->LoadStatus ) {
         LoadUpdate(); // zmiana modelu ładunku
+    }
+    update_exchange( dt );
+
     return true; // Ra: chyba tak?
 }
 
@@ -4203,6 +4240,21 @@ void TDynamicObject::RenderSounds() {
             }
         }
     }
+    // door locks
+    if( MoverParameters->DoorBlockedFlag() != m_doorlocks ) {
+        // toggle state of the locks...
+        m_doorlocks = !m_doorlocks;
+        // ...and play relevant sounds
+        for( auto &door : m_doorsounds ) {
+            if( m_doorlocks ) {
+                door.lock.play( sound_flags::exclusive );
+            }
+            else {
+                door.unlock.play( sound_flags::exclusive );
+            }
+        }
+    }
+
     // horns
     if( TestFlag( MoverParameters->WarningSignal, 1 ) ) {
         sHorn1.play( sound_flags::exclusive | sound_flags::looping );
@@ -5413,7 +5465,7 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                 }
 
 				else if( token == "dooropen:" ) {
-                    sound_source soundtemplate { sound_placement::general };
+                    sound_source soundtemplate { sound_placement::general, 25.f };
                     soundtemplate.deserialize( parser, sound_type::single );
                     soundtemplate.owner( this );
                     for( auto &door : m_doorsounds ) {
@@ -5425,7 +5477,7 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                 }
 
 				else if( token == "doorclose:" ) {
-                    sound_source soundtemplate { sound_placement::general };
+                    sound_source soundtemplate { sound_placement::general, 25.f };
                     soundtemplate.deserialize( parser, sound_type::single );
                     soundtemplate.owner( this );
                     for( auto &door : m_doorsounds ) {
@@ -5436,8 +5488,32 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                     }
                 }
 
+                else if( token == "doorlock:" ) {
+                    sound_source soundtemplate { sound_placement::general, 12.5f };
+                    soundtemplate.deserialize( parser, sound_type::single );
+                    soundtemplate.owner( this );
+                    for( auto &door : m_doorsounds ) {
+                        // apply configuration to all defined doors, but preserve their individual offsets
+                        auto const dooroffset { door.lock.offset() };
+                        door.lock = soundtemplate;
+                        door.lock.offset( dooroffset );
+                    }
+                }
+
+				else if( token == "doorunlock:" ) {
+                    sound_source soundtemplate { sound_placement::general, 12.5f };
+                    soundtemplate.deserialize( parser, sound_type::single );
+                    soundtemplate.owner( this );
+                    for( auto &door : m_doorsounds ) {
+                        // apply configuration to all defined doors, but preserve their individual offsets
+                        auto const dooroffset { door.unlock.offset() };
+                        door.unlock = soundtemplate;
+                        door.unlock.offset( dooroffset );
+                    }
+                }
+
                 else if( token == "doorstepopen:" ) {
-                    sound_source soundtemplate { sound_placement::general };
+                    sound_source soundtemplate { sound_placement::general, 20.f };
                     soundtemplate.deserialize( parser, sound_type::single );
                     soundtemplate.owner( this );
                     for( auto &door : m_doorsounds ) {
@@ -5449,7 +5525,7 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                 }
 
                 else if( token == "doorstepclose:" ) {
-                    sound_source soundtemplate { sound_placement::general };
+                    sound_source soundtemplate { sound_placement::general, 20.f };
                     soundtemplate.deserialize( parser, sound_type::single );
                     soundtemplate.owner( this );
                     for( auto &door : m_doorsounds ) {
@@ -5539,6 +5615,8 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                             auto const location { glm::vec3 { MoverParameters->Dim.W * 0.5f, MoverParameters->Dim.H * 0.5f, offset } };
                             door.rsDoorClose.offset( location );
                             door.rsDoorOpen.offset( location );
+                            door.lock.offset( location );
+                            door.unlock.offset( location );
                             door.step_close.offset( location );
                             door.step_open.offset( location );
                             m_doorsounds.emplace_back( door );
@@ -5549,6 +5627,8 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                             auto const location { glm::vec3 { MoverParameters->Dim.W * -0.5f, MoverParameters->Dim.H * 0.5f, offset } };
                             door.rsDoorClose.offset( location );
                             door.rsDoorOpen.offset( location );
+                            door.lock.offset( location );
+                            door.unlock.offset( location );
                             door.step_close.offset( location );
                             door.step_open.offset( location );
                             m_doorsounds.emplace_back( door );
@@ -5614,6 +5694,9 @@ void TDynamicObject::LoadMMediaFile( std::string BaseDir, std::string TypeName, 
                     // odpalanie silnika
                     m_powertrainsounds.engine_ignition.deserialize( parser, sound_type::single );
                     m_powertrainsounds.engine_ignition.owner( this );
+                } else if (token == "shutdown:") {
+                    m_powertrainsounds.engine_shutdown.deserialize(parser, sound_type::single);
+                    m_powertrainsounds.engine_shutdown.owner(this);
                 }
                 else if( token == "engageslippery:" ) {
                     // tarcie tarcz sprzegla:
@@ -6327,7 +6410,7 @@ TDynamicObject::powertrain_sounds::position( glm::vec3 const Location ) {
     std::vector<sound_source *> enginesounds = {
         &inverter,
         &motor_relay, &dsbWejscie_na_bezoporow, &motor_parallel, &motor_shuntfield, &rsWentylator,
-        &engine, &engine_ignition, &engine_revving, &engine_turbo, &oil_pump, &radiator_fan, &radiator_fan_aux,
+        &engine, &engine_ignition, &engine_shutdown, &engine_revving, &engine_turbo, &oil_pump, &radiator_fan, &radiator_fan_aux,
         &transmission, &rsEngageSlippery
     };
     for( auto sound : enginesounds ) {
@@ -6363,6 +6446,7 @@ TDynamicObject::powertrain_sounds::render( TMoverParameters const &Vehicle, doub
         if( true == Vehicle.Mains ) {
            // TODO: separate engine and main circuit
            // engine activation
+            engine_shutdown.stop();
             engine_ignition
                 .pitch( engine_ignition.m_frequencyoffset + engine_ignition.m_frequencyfactor * 1.f )
                 .gain( engine_ignition.m_amplitudeoffset + engine_ignition.m_amplitudefactor * 1.f )
@@ -6376,7 +6460,10 @@ TDynamicObject::powertrain_sounds::render( TMoverParameters const &Vehicle, doub
         else {
             // engine deactivation
             engine_ignition.stop();
-            // main circuit
+            engine_shutdown.pitch( engine_shutdown.m_frequencyoffset + engine_shutdown.m_frequencyfactor * 1.f )
+                .gain( engine_shutdown.m_amplitudeoffset + engine_shutdown.m_amplitudefactor * 1.f )
+                .play( sound_flags::exclusive );
+            // main circuit deactivation
             linebreaker_open
                 .pitch( linebreaker_open.m_frequencyoffset + linebreaker_open.m_frequencyfactor * 1.f )
                 .gain( linebreaker_open.m_amplitudeoffset + linebreaker_open.m_amplitudefactor * 1.f )
@@ -6431,7 +6518,7 @@ TDynamicObject::powertrain_sounds::render( TMoverParameters const &Vehicle, doub
                 default: {
                     volume =
                         engine.m_amplitudeoffset
-                        + engine.m_amplitudefactor * ( Vehicle.EnginePower / 1000 + std::fabs( Vehicle.enrot ) * 60.0 );
+                        + engine.m_amplitudefactor * ( Vehicle.EnginePower + std::fabs( Vehicle.enrot ) * 60.0 );
                     break;
                 }
             }
@@ -6583,7 +6670,7 @@ TDynamicObject::powertrain_sounds::render( TMoverParameters const &Vehicle, doub
                 case TEngineType::ElectricSeriesMotor: {
                     volume =
                         motor.m_amplitudeoffset
-                        + motor.m_amplitudefactor * ( Vehicle.EnginePower / 1000 + motorrevolutions * 60.0 );
+                        + motor.m_amplitudefactor * ( Vehicle.EnginePower + motorrevolutions * 60.0 );
                     break;
                 }
                 default: {

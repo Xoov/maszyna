@@ -250,7 +250,7 @@ double TMoverParameters::Current(double n, double U)
 	else
 		Im = MotorCurrent;
 
-    EnginePower = abs(Itot) * (1 + RList[MainCtrlActualPos].Mn) * abs(U);
+    EnginePower = abs(Itot) * (1 + RList[MainCtrlActualPos].Mn) * abs(U) / 1000.0;
 
     // awarie
     MotorCurrent = abs(Im); // zmienna pomocnicza
@@ -740,8 +740,7 @@ void TMoverParameters::UpdatePantVolume(double dt)
             // Ra 2013-12: Niebugocław mówi, że w EZT nie ma potrzeby odcinać kurkiem
             PantPress = ScndPipePress;
             // ograniczenie ciśnienia do MaxPress (tylko w pantografach!)
-            PantPress = std::min( PantPress, EnginePowerSource.CollectorParameters.MaxPress );
-            PantPress = std::max( PantPress, 0.0 );
+            PantPress = clamp( ScndPipePress, 0.0, EnginePowerSource.CollectorParameters.MaxPress );
             PantVolume = (PantPress + 1.0) * 0.1; // objętość, na wypadek odcięcia kurkiem
         }
         else
@@ -754,8 +753,7 @@ void TMoverParameters::UpdatePantVolume(double dt)
                     * ( TrainType == dt_EZT ? 0.003 : 0.005 ) / std::max( 1.0, PantPress )
                     * ( 0.45 - ( ( 0.1 / PantVolume / 10 ) - 0.1 ) ) / 0.45;
             }
-            PantPress = std::min( (10.0 * PantVolume) - 1.0, EnginePowerSource.CollectorParameters.MaxPress ); // tu by się przydała objętość zbiornika
-            PantPress = std::max( PantPress, 0.0 );
+            PantPress = clamp( ( 10.0 * PantVolume ) - 1.0, 0.0, EnginePowerSource.CollectorParameters.MaxPress ); // tu by się przydała objętość zbiornika
         }
         if( !PantCompFlag && ( PantVolume > 0.1 ) )
             PantVolume -= dt * 0.0003 * std::max( 1.0, PantPress * 0.5 ); // nieszczelności: 0.0003=0.3l/s
@@ -989,7 +987,7 @@ double TMoverParameters::ManualBrakeRatio(void)
 // Q: 20160713
 // Zwraca objętość
 // *****************************************************************************
-double TMoverParameters::BrakeVP(void)
+double TMoverParameters::BrakeVP(void) const
 {
     if (BrakeVVolume > 0)
         return Volume / (10.0 * BrakeVVolume);
@@ -4355,7 +4353,7 @@ double TMoverParameters::TractionForce( double dt ) {
 
                     case 1: { // manual
                         if( ( ActiveDir != 0 )
-                            && ( RList[ MainCtrlActualPos ].R > RVentCutOff ) ) {
+                         && ( RList[ MainCtrlActualPos ].R > RVentCutOff ) ) {
                             RventRot += ( RVentnmax - RventRot ) * RVentSpeed * dt;
                         }
                         else {
@@ -4367,7 +4365,7 @@ double TMoverParameters::TractionForce( double dt ) {
                     case 2: { // automatic
                         auto const motorcurrent{ std::min<double>( ImaxHi, std::abs( Im ) ) };
                         if( ( std::abs( Itot ) > RVentMinI )
-                            && ( RList[ MainCtrlActualPos ].R > RVentCutOff ) ) {
+                         && ( RList[ MainCtrlActualPos ].R > RVentCutOff ) ) {
 
                             RventRot +=
                                 ( RVentnmax
@@ -5398,8 +5396,6 @@ bool TMoverParameters::AutoRelaySwitch(bool State)
 bool TMoverParameters::AutoRelayCheck(void)
 {
     bool OK = false; // b:int;
-    bool ARFASI = false;
-    bool ARFASI2 = false; // sprawdzenie wszystkich warunkow (AutoRelayFlag, AutoSwitch, Im<Imin)
     bool ARC = false;
 
     // Ra 2014-06: dla SN61 nie działa prawidłowo
@@ -5421,11 +5417,14 @@ bool TMoverParameters::AutoRelayCheck(void)
         }
     }
 
-    ARFASI2 = (!AutoRelayFlag) || ((MotorParam[ScndCtrlActualPos].AutoSwitch) &&
-                                    (abs(Im) < Imin)); // wszystkie warunki w jednym
-    ARFASI = (!AutoRelayFlag) || ((RList[MainCtrlActualPos].AutoSwitch) && (abs(Im) < Imin)) ||
-              ((!RList[MainCtrlActualPos].AutoSwitch) &&
-               (RList[MainCtrlActualPos].Relay < MainCtrlPos)); // wszystkie warunki w jednym
+    // sprawdzenie wszystkich warunkow (AutoRelayFlag, AutoSwitch, Im<Imin)
+    auto const ARFASI2 { (
+        ( !AutoRelayFlag )
+     || ( ( MotorParam[ ScndCtrlActualPos ].AutoSwitch ) && ( abs( Im ) < Imin ) ) ) };
+    auto const ARFASI { (
+        ( !AutoRelayFlag )
+     || ( ( RList[ MainCtrlActualPos ].AutoSwitch ) && ( abs( Im ) < Imin ) )
+     || ( ( !RList[ MainCtrlActualPos ].AutoSwitch ) && ( RList[ MainCtrlActualPos ].Relay < MainCtrlPos ) ) ) };
     // brak PSR                   na tej pozycji działa PSR i prąd poniżej progu
     // na tej pozycji nie działa PSR i pozycja walu ponizej
     //                         chodzi w tym wszystkim o to, żeby można było zatrzymać rozruch na
@@ -6487,14 +6486,12 @@ bool TMoverParameters::LoadingDone(double LSpeed, std::string LoadInit)
 // Q: 20160713
 // Zwraca informacje o działającej blokadzie drzwi
 // *************************************************************************************************
-bool TMoverParameters::DoorBlockedFlag(void)
-{
-    // if (DoorBlocked=true) and (Vel<5.0) then
-    bool DBF = false;
-    if ((DoorBlocked == true) && (Vel >= 5.0))
-        DBF = true;
-
-    return DBF;
+bool TMoverParameters::DoorBlockedFlag( void ) {
+    // TBD: configurable lock activation threshold?
+    return (
+        ( true == DoorBlocked )
+     && ( true == DoorLockEnabled )
+     && ( Vel >= 10.0 ) );
 }
 
 // *************************************************************************************************
@@ -6627,12 +6624,9 @@ TMoverParameters::signal_departure( bool const State, range_t const Notify ) {
 void
 TMoverParameters::update_autonomous_doors( double const Deltatime ) {
 
-    if( ( DoorCloseCtrl != control_t::autonomous )
-     || ( ( false == DoorLeftOpened )
-       && ( false == DoorRightOpened ) ) ) {
-        // nothing to do
-        return;
-    }
+    if( DoorCloseCtrl != control_t::autonomous ) { return; }
+    if( ( false == DoorLeftOpened )
+     && ( false == DoorRightOpened ) ) { return; }
 
     if( DoorStayOpen > 0.0 ) {
         // update door timers if the door close after defined time
@@ -6644,18 +6638,19 @@ TMoverParameters::update_autonomous_doors( double const Deltatime ) {
         if( true == DoorLeftOpened )  { DoorLeftOpenTimer  = DoorStayOpen; }
         if( true == DoorRightOpened ) { DoorRightOpenTimer = DoorStayOpen; }
     }
-    // the door are closed if their timer goes below 0, or if the vehicle is moving at > 5 km/h
+    // the door are closed if their timer goes below 0, or if the vehicle is moving at > 10 km/h
+    auto const closingspeed { 10.0 };
     // NOTE: timer value of 0 is 'special' as it means the door will stay open until vehicle is moving
     if( true == DoorLeftOpened ) {
         if( ( ( DoorStayOpen > 0.0 ) && ( DoorLeftOpenTimer < 0.0 ) )
-         || ( Vel > 5.0 ) ) {
+         || ( Vel > closingspeed ) ) {
             // close the door and set the timer to expired state (closing may happen sooner if vehicle starts moving)
             DoorLeft( false, range_t::local );
         }
     }
     if( true == DoorRightOpened ) {
         if( ( ( DoorStayOpen > 0.0 ) && ( DoorRightOpenTimer < 0.0 ) )
-         || ( Vel > 5.0 ) ) {
+         || ( Vel > closingspeed ) ) {
             // close the door and set the timer to expired state (closing may happen sooner if vehicle starts moving)
             DoorRight( false, range_t::local );
         }
@@ -7579,6 +7574,8 @@ void TMoverParameters::LoadFIZ_Load( std::string const &line ) {
     extract_value( OverLoadFactor, "OverLoadFactor", line, "" );
     extract_value( LoadSpeed, "LoadSpeed", line, "" );
     extract_value( UnLoadSpeed, "UnLoadSpeed", line, "" );
+
+    extract_value( LoadMinOffset, "LoadMinOffset", line, "" );
 }
 
 void TMoverParameters::LoadFIZ_Dimensions( std::string const &line ) {
@@ -8513,8 +8510,8 @@ void TMoverParameters::LoadFIZ_PowerParamsDecode( TPowerParameters &Powerparamet
             //ciśnienie rozłączające WS
             extract_value( collectorparameters.MinPress, "MinPress", Line, "3.5" ); //domyślnie 2 bary do załączenia WS
             //maksymalne ciśnienie za reduktorem
-            collectorparameters.MaxPress = 5.0 + 0.001 * ( Random( 50 ) - Random( 50 ) );
-            extract_value( collectorparameters.MaxPress, "MaxPress", Line, "" );
+//            collectorparameters.MaxPress = 5.0 + 0.001 * ( Random( 50 ) - Random( 50 ) );
+            extract_value( collectorparameters.MaxPress, "MaxPress", Line, "5.0" );
             break;
         }
         case TPowerSource::PowerCable: {

@@ -40,7 +40,7 @@ struct global_settings {
     std::string LastGLError;
     float ZoomFactor{ 1.f }; // determines current camera zoom level. TODO: move it to the renderer
     bool CabWindowOpen{ false }; // controls sound attenuation between cab and outside
-    bool ControlPicking{ false }; // indicates controls pick mode is active
+    bool ControlPicking{ true }; // indicates controls pick mode is active
     bool DLFont{ false }; // switch indicating presence of basic font
     bool bActive{ true }; // czy jest aktywnym oknem
     int iPause{ 0 }; // globalna pauza ruchu: b0=start,b1=klawisz,b2=tło,b3=lagi,b4=wczytywanie
@@ -91,6 +91,7 @@ struct global_settings {
     int iTextMode{ 0 }; // tryb pracy wyświetlacza tekstowego
     int iScreenMode[ 12 ] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }; // numer ekranu wyświetlacza tekstowego
     glm::vec4 UITextColor { glm::vec4( 225.f / 255.f, 225.f / 255.f, 225.f / 255.f, 1.f ) }; // base color of UI text
+    float UIBgOpacity { 0.65f }; // opacity of ui windows
     std::string asLang{ "pl" }; // domyślny język - http://tools.ietf.org/html/bcp47
     // gfx
     int iWindowWidth{ 800 };
@@ -141,12 +142,12 @@ struct global_settings {
     double fBrakeStep{ 1.0 }; // krok zmiany hamulca dla klawiszy [Num3] i [Num9]
     // parametry kalibracyjne wejść z pulpitu
     double fCalibrateIn[ 6 ][ 6 ] = {
-        { 0, 1, 0, 0, 0, 0 },
-        { 0, 1, 0, 0, 0, 0 },
-        { 0, 1, 0, 0, 0, 0 },
-        { 0, 1, 0, 0, 0, 0 },
-        { 0, 1, 0, 0, 0, 0 },
-        { 0, 1, 0, 0, 0, 0 } };
+        { 0, 0, 0, 0, 0, 0 },
+        { 0, 0, 0, 0, 0, 0 },
+        { 0, 0, 0, 0, 0, 0 },
+        { 0, 0, 0, 0, 0, 0 },
+        { 0, 0, 0, 0, 0, 0 },
+        { 0, 0, 0, 0, 0, 0 } };
     // parametry kalibracyjne wyjść dla pulpitu
     double fCalibrateOut[ 7 ][ 6 ] = {
         { 0, 1, 0, 0, 0, 0 },
