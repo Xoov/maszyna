@@ -5511,6 +5511,7 @@ bool TTrain::Update( double const Deltatime )
         ggBrakeProfileCtrl.Update();
         ggBrakeProfileG.Update();
         ggBrakeProfileR.Update();
+		ggBrakeOperationModeCtrl.Update();
         ggMaxCurrentCtrl.Update();
         // NBMX wrzesien 2003 - drzwi
         ggDoorLeftButton.Update();
@@ -6724,6 +6725,7 @@ void TTrain::clear_cab_controls()
     ggBrakeProfileCtrl.Clear();
     ggBrakeProfileG.Clear();
     ggBrakeProfileR.Clear();
+	ggBrakeOperationModeCtrl.Clear();
     ggMaxCurrentCtrl.Clear();
     ggMainOffButton.Clear();
     ggMainOnButton.Clear();
@@ -7091,6 +7093,12 @@ void TTrain::set_cab_controls() {
                 1.0 :
                 0.0 );
     }
+	if (ggBrakeOperationModeCtrl.SubModel != nullptr) {
+		ggBrakeOperationModeCtrl.PutValue(
+			(mvOccupied->BrakeOpModeFlag > 0 ?
+				log2(mvOccupied->BrakeOpModeFlag) :
+				0));
+	}
     // alarm chain
     ggAlarmChain.PutValue(
         mvControlled->AlarmChainFlag ?
@@ -7282,6 +7290,7 @@ bool TTrain::initialize_gauge(cParser &Parser, std::string const &Label, int con
         { "brakeprofile_sw:", ggBrakeProfileCtrl },
         { "brakeprofileg_sw:", ggBrakeProfileG },
         { "brakeprofiler_sw:", ggBrakeProfileR },
+		{ "brakeopmode_sw:", ggBrakeOperationModeCtrl },
         { "maxcurrent_sw:", ggMaxCurrentCtrl },
         { "main_off_bt:", ggMainOffButton },
         { "main_on_bt:", ggMainOnButton },
