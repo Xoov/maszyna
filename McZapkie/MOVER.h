@@ -294,16 +294,16 @@ enum TProblem // lista problemów taboru, które uniemożliwiają jazdę
 /*lokacja*/
 struct TLocation
 {
-	double X = 0.0;
-	double Y = 0.0;
-	double Z = 0.0;
+	double X;
+	double Y;
+	double Z;
 };
 /*rotacja*/
 struct TRotation
 {
-	double Rx = 0.0;
-	double Ry = 0.0;
-	double Rz = 0.0;
+	double Rx;
+	double Ry;
+	double Rz;
 };
 /*wymiary*/
 struct TDimension
@@ -414,7 +414,7 @@ struct TCurrentCollector {
     double MinH; double MaxH; //zakres ruchu pantografu, nigdzie nie używany
     double CSW;       //szerokość części roboczej (styku) ślizgacza
     double MinV; double MaxV; //minimalne i maksymalne akceptowane napięcie
-    double OVP;       //czy jest przekaznik nadnapieciowy
+    bool OVP;       //czy jest przekaznik nadnapieciowy
     double InsetV;    //minimalne napięcie wymagane do załączenia
     double MinPress;  //minimalne ciśnienie do załączenia WS
     double MaxPress;  //maksymalne ciśnienie za reduktorem
@@ -944,11 +944,19 @@ public:
 	double MED_EPVC_Time = 7; // czas korekcji sily hamowania EP, gdy nie ma dostepnego ED
 	bool MED_Ncor = 0; // czy korekcja sily hamowania z uwzglednieniem nacisku
 	/*-dla wagonow*/
+    struct load_attributes {
+        std::string name; // name of the cargo
+        float offset_min { 0.f }; // offset applied to cargo model when load amount is 0
+
+        load_attributes() = default;
+        load_attributes( std::string const &Name, float const Offsetmin ) :
+            name( Name ), offset_min( Offsetmin )
+        {}
+    };
+    std::vector<load_attributes> LoadAttributes;
     float MaxLoad = 0.f;           /*masa w T lub ilosc w sztukach - ladownosc*/
-	std::string LoadAccepted; std::string LoadQuantity; /*co moze byc zaladowane, jednostki miary*/
-	double OverLoadFactor = 0.0;       /*ile razy moze byc przekroczona ladownosc*/
-    float LoadMinOffset { 0.f }; // offset applied to cargo model when load amount is 0
-	float LoadSpeed = 0.f; float UnLoadSpeed = 0.f;/*szybkosc na- i rozladunku jednostki/s*/
+    double OverLoadFactor = 0.0;       /*ile razy moze byc przekroczona ladownosc*/
+    float LoadSpeed = 0.f; float UnLoadSpeed = 0.f;/*szybkosc na- i rozladunku jednostki/s*/
 	int DoorOpenCtrl = 0; int DoorCloseCtrl = 0; /*0: przez pasazera, 1: przez maszyniste, 2: samoczynne (zamykanie)*/
 	double DoorStayOpen = 0.0;               /*jak dlugo otwarte w przypadku DoorCloseCtrl=2*/
 	bool DoorClosureWarning = false;      /*czy jest ostrzeganie przed zamknieciem*/
@@ -965,8 +973,8 @@ public:
 	double SpeedCtrlDelay = 2; /*opoznienie dzialania tempomatu z wybieralna predkoscia*/
     /*--sekcja zmiennych*/
     /*--opis konkretnego egzemplarza taboru*/
-	TLocation Loc; //pozycja pojazdów do wyznaczenia odległości pomiędzy sprzęgami
-	TRotation Rot;
+    TLocation Loc { 0.0, 0.0, 0.0 }; //pozycja pojazdów do wyznaczenia odległości pomiędzy sprzęgami
+    TRotation Rot { 0.0, 0.0, 0.0 };
 	std::string Name;                       /*nazwa wlasna*/
 	TCoupling Couplers[2];  //urzadzenia zderzno-sprzegowe, polaczenia miedzy wagonami
 #ifdef EU07_USE_OLD_HVCOUPLERS
@@ -1119,6 +1127,8 @@ public:
 	double PantPress = 0.0; /*Cisnienie w zbiornikach pantografow*/
     bool PantPressSwitchActive{ false }; // state of the pantograph pressure switch. gets primed at defined pressure level in pantograph air system
     bool PantPressLockActive{ false }; // pwr system state flag. fires when pressure switch activates by pantograph pressure dropping below defined level
+    bool NoVoltRelay{ true }; // switches off if the power level drops below threshold
+    bool OvervoltageRelay{ true }; // switches off if the power level goes above threshold
     bool s_CAtestebrake = false; //hunter-091012: zmienna dla testu ca
 
     /*-zmienne dla lokomotywy spalinowej z przekladnia mechaniczna*/
@@ -1127,7 +1137,8 @@ public:
 	double dizel_engage = 0.0; /*sprzeglo skrzyni biegow: aktualny docisk*/
 	double dizel_automaticgearstatus = 0.0; /*0 - bez zmiany, -1 zmiana na nizszy +1 zmiana na wyzszy*/
     bool dizel_startup { false }; // engine startup procedure request indicator
-	bool dizel_ignition = false; // engine ignition request indicator
+    bool dizel_ignition { false }; // engine ignition request indicator
+    bool dizel_spinup { false }; // engine spin up to idle speed flag
 	double dizel_engagedeltaomega = 0.0;    /*roznica predkosci katowych tarcz sprzegla*/
 	double dizel_n_old = 0.0; /*poredkosc na potrzeby obliczen sprzegiel*/
 	double dizel_Torque = 0.0; /*poredkosc na potrzeby obliczen sprzegiel*/
@@ -1164,9 +1175,10 @@ public:
 	double eAngle = M_PI * 0.5;
 
 	/*-dla wagonow*/
-    float Load = 0.f;      /*masa w T lub ilosc w sztukach - zaladowane*/
-	std::string LoadType;   /*co jest zaladowane*/
-	int LoadStatus = 0; //+1=trwa rozladunek,+2=trwa zaladunek,+4=zakończono,0=zaktualizowany model
+    float LoadAmount = 0.f;      /*masa w T lub ilosc w sztukach - zaladowane*/
+    load_attributes LoadType;
+    std::string LoadQuantity; // jednostki miary
+    int LoadStatus = 0; //+1=trwa rozladunek,+2=trwa zaladunek,+4=zakończono,0=zaktualizowany model
 	double LastLoadChangeTime = 0.0; //raz (roz)ładowania
 
 	bool DoorBlocked = false;    //Czy jest blokada drzwi
@@ -1208,7 +1220,7 @@ private:
 	double CouplerDist(int Coupler);
 
 public:
-	TMoverParameters(double VelInitial, std::string TypeNameInit, std::string NameInit, int LoadInitial, std::string LoadTypeInitial, int Cab);
+	TMoverParameters(double VelInitial, std::string TypeNameInit, std::string NameInit, int Cab);
 	// obsługa sprzęgów
 	double Distance(const TLocation &Loc1, const TLocation &Loc2, const TDimension &Dim1, const TDimension &Dim2);
 /*	double Distance(const vector3 &Loc1, const vector3 &Loc2, const vector3 &Dim1, const vector3 &Dim2);
@@ -1336,7 +1348,7 @@ public:
     void FuelPumpCheck( double const Timestep );
     void OilPumpCheck( double const Timestep );
     bool FuseOn(void); //bezpiecznik nadamiary
-	bool FuseFlagCheck(void); // sprawdzanie flagi nadmiarowego
+	bool FuseFlagCheck(void) const; // sprawdzanie flagi nadmiarowego
 	void FuseOff(void); // wylaczenie nadmiarowego
     double ShowCurrent( int AmpN ) const; //pokazuje bezwgl. wartosc pradu na wybranym amperomierzu
 	double ShowCurrentP(int AmpN) const;  //pokazuje bezwgl. wartosc pradu w wybranym pojezdzie                                                             //Q 20160722
@@ -1356,7 +1368,7 @@ public:
 	bool AutoRelaySwitch(bool State); //przelacznik automatycznego rozruchu
 	bool AutoRelayCheck(void);//symulacja automatycznego rozruchu
 
-	bool ResistorsFlagCheck(void); //sprawdzenie kontrolki oporow rozruchowych NBMX
+	bool ResistorsFlagCheck(void) const; //sprawdzenie kontrolki oporow rozruchowych NBMX
     bool PantFront( bool const State, range_t const Notify = range_t::consist ); //obsluga pantografou przedniego
     bool PantRear( bool const State, range_t const Notify = range_t::consist ); //obsluga pantografu tylnego
 
@@ -1372,7 +1384,8 @@ public:
     bool dizel_Update(double dt);
 
 	/* funckje dla wagonow*/
-	bool LoadingDone(double LSpeed, std::string LoadInit);
+    bool AssignLoad( std::string const &Name, float const Amount = 0.f );
+	bool LoadingDone(double LSpeed, std::string const &Loadname);
 	bool DoorLeft(bool State, range_t const Notify = range_t::consist ); //obsluga drzwi lewych
 	bool DoorRight(bool State, range_t const Notify = range_t::consist ); //obsluga drzwi prawych
 	bool DoorBlockedFlag(void); //sprawdzenie blokady drzwi

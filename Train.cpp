@@ -311,6 +311,8 @@ TTrain::commandhandler_map const TTrain::m_commandhandlers = {
     { user_command::instrumentlighttoggle, &TTrain::OnCommand_instrumentlighttoggle },
     { user_command::instrumentlightenable, &TTrain::OnCommand_instrumentlightenable },
     { user_command::instrumentlightdisable, &TTrain::OnCommand_instrumentlightdisable },
+    { user_command::dashboardlighttoggle, &TTrain::OnCommand_dashboardlighttoggle },
+    { user_command::timetablelighttoggle, &TTrain::OnCommand_timetablelighttoggle },
     { user_command::doorlocktoggle, &TTrain::OnCommand_doorlocktoggle },
     { user_command::doortoggleleft, &TTrain::OnCommand_doortoggleleft },
     { user_command::doortoggleright, &TTrain::OnCommand_doortoggleright },
@@ -370,7 +372,6 @@ TTrain::TTrain() {
     bCabLightDim = false;
     //-----
     pMechSittingPosition = Math3D::vector3(0, 0, 0); // ABu: 180404
-    InstrumentLightActive = false; // ABu: 030405
     fTachoTimer = 0.0; // włączenie skoków wskazań prędkościomierza
 
     //
@@ -595,6 +596,7 @@ TTrain::get_state() const {
         btHaslerBrakes.GetValue(),
         btHaslerCurrent.GetValue(),
         ( TestFlag( mvOccupied->SecuritySystem.Status, s_CAalarm ) || TestFlag( mvOccupied->SecuritySystem.Status, s_SHPalarm ) ),
+        btLampkaHVoltageB.GetValue(),
         fTachoVelocity,
         static_cast<float>( mvOccupied->Compressor ),
         static_cast<float>( mvOccupied->PipePress ),
@@ -3619,6 +3621,54 @@ void TTrain::OnCommand_instrumentlightdisable( TTrain *Train, command_data const
     }
 }
 
+void TTrain::OnCommand_dashboardlighttoggle( TTrain *Train, command_data const &Command ) {
+    // only reacting to press, so the switch doesn't flip back and forth if key is held down
+    if( Command.action != GLFW_PRESS ) { return; }
+
+    if( Train->ggDashboardLightButton.SubModel == nullptr ) {
+        // TODO: proper control deviced definition for the interiors, that doesn't hinge of presence of 3d submodels
+        WriteLog( "Dashboard Light switch is missing, or wasn't defined" );
+        return;
+    }
+
+    if( false == Train->DashboardLightActive ) {
+        // turn on
+        Train->DashboardLightActive = true;
+        // visual feedback
+        Train->ggDashboardLightButton.UpdateValue( 1.0, Train->dsbSwitch );
+    }
+    else {
+        //turn off
+        Train->DashboardLightActive = false;
+        // visual feedback
+        Train->ggDashboardLightButton.UpdateValue( 0.0, Train->dsbSwitch );
+    }
+}
+
+void TTrain::OnCommand_timetablelighttoggle( TTrain *Train, command_data const &Command ) {
+    // only reacting to press, so the switch doesn't flip back and forth if key is held down
+    if( Command.action != GLFW_PRESS ) { return; }
+
+    if( Train->ggTimetableLightButton.SubModel == nullptr ) {
+        // TODO: proper control deviced definition for the interiors, that doesn't hinge of presence of 3d submodels
+        WriteLog( "Timetable Light switch is missing, or wasn't defined" );
+        return;
+    }
+
+    if( false == Train->TimetableLightActive ) {
+        // turn on
+        Train->TimetableLightActive = true;
+        // visual feedback
+        Train->ggTimetableLightButton.UpdateValue( 1.0, Train->dsbSwitch );
+    }
+    else {
+        //turn off
+        Train->TimetableLightActive = false;
+        // visual feedback
+        Train->ggTimetableLightButton.UpdateValue( 0.0, Train->dsbSwitch );
+    }
+}
+
 void TTrain::OnCommand_heatingtoggle( TTrain *Train, command_data const &Command ) {
 
     if( Train->ggTrainHeatingButton.SubModel == nullptr ) {
@@ -3679,7 +3729,7 @@ void TTrain::OnCommand_generictoggle( TTrain *Train, command_data const &Command
 
     if( Command.action == GLFW_PRESS ) {
         // only reacting to press, so the switch doesn't flip back and forth if key is held down
-        if( item.GetValue() < 0.25 ) {
+        if( item.GetDesiredValue() < 0.5 ) {
             // turn on
             // visual feedback
             item.UpdateValue( 1.0, Train->dsbSwitch );
@@ -4830,18 +4880,6 @@ bool TTrain::Update( double const Deltatime )
             Console::ValueSet(6, fTachoVelocity);
         }
 #endif
-        // hunter-080812: wyrzucanie szybkiego na elektrykach gdy nie ma napiecia przy dowolnym ustawieniu kierunkowego
-        // Ra: to już jest w T_MoverParameters::TractionForce(), ale zależy od kierunku
-        if( ( mvControlled->Mains )
-         && ( mvControlled->EnginePowerSource.SourceType == TPowerSource::CurrentCollector ) ) {
-            if( std::max( mvControlled->GetTrainsetVoltage(), std::abs( mvControlled->RunningTraction.TractionVoltage ) ) < 0.5 * mvControlled->EnginePowerSource.MaxVoltage ) {
-                // TODO: check whether it should affect entire consist for EMU
-                // TODO: check whether it should happen if there's power supplied alternatively through hvcouplers
-                // TODO: potentially move this to the mover module, as there isn't much reason to have this dependent on the operator presence
-                mvControlled->MainSwitch( false, ( mvControlled->TrainType == dt_EZT ? range_t::unit : range_t::local ) );
-            }
-        }
-
         // hunter-091012: swiatlo
         if (bCabLight == true)
         {
@@ -5094,16 +5132,16 @@ bool TTrain::Update( double const Deltatime )
                 ( true == mvControlled->ResistorsFlagCheck() )
              || ( mvControlled->MainCtrlActualPos == 0 ) ); // do EU04
 
-            if( ( mvControlled->Im != 0 )
-             || ( mvOccupied->BrakePress > 2 )
+            if( ( mvControlled->StLinFlag )
+             || ( mvOccupied->BrakePress > 2.0 )
              || ( mvOccupied->PipePress < 3.6 ) ) {
                 // Ra: czy to jest udawanie działania styczników liniowych?
                 btLampkaStyczn.Turn( false );
             }
-            else if( mvOccupied->BrakePress < 1 )
+            else if( mvOccupied->BrakePress < 1.0 )
                 btLampkaStyczn.Turn( true ); // mozna prowadzic rozruch
-            if( ( ( TestFlag( mvControlled->Couplers[ 1 ].CouplingFlag, ctrain_controll ) ) && ( mvControlled->CabNo == 1 ) ) ||
-                ( ( TestFlag( mvControlled->Couplers[ 0 ].CouplingFlag, ctrain_controll ) ) && ( mvControlled->CabNo == -1 ) ) )
+            if( ( ( TestFlag( mvControlled->Couplers[ side::rear ].CouplingFlag, coupling::control ) ) && ( mvControlled->CabNo == 1 ) )
+             || ( ( TestFlag( mvControlled->Couplers[ side::front ].CouplingFlag, coupling::control ) ) && ( mvControlled->CabNo == -1 ) ) )
                 btLampkaUkrotnienie.Turn( true );
             else
                 btLampkaUkrotnienie.Turn( false );
@@ -5155,10 +5193,10 @@ bool TTrain::Update( double const Deltatime )
             }
 
             if( mvControlled->Signalling == true ) {
-                if( mvOccupied->BrakePress >= 0.145f ) {
+                if( mvOccupied->BrakePress >= 1.45f ) {
                     btLampkaHamowanie1zes.Turn( true );
                 }
-                if( mvControlled->BrakePress < 0.075f ) {
+                if( mvControlled->BrakePress < 0.75f ) {
                     btLampkaHamowanie1zes.Turn( false );
                 }
             }
@@ -5290,39 +5328,49 @@ bool TTrain::Update( double const Deltatime )
             if (tmp)
                 if ( mvControlled->Battery || mvControlled->ConverterFlag ) {
 
-                    btLampkaWylSzybkiB.Turn( tmp->MoverParameters->Mains );
-                    btLampkaWylSzybkiBOff.Turn( false == tmp->MoverParameters->Mains );
+                    auto const *mover { tmp->MoverParameters };
 
-                    btLampkaOporyB.Turn(tmp->MoverParameters->ResistorsFlagCheck());
+                    btLampkaWylSzybkiB.Turn( mover->Mains );
+                    btLampkaWylSzybkiBOff.Turn( false == mover->Mains );
+
+                    btLampkaOporyB.Turn(mover->ResistorsFlagCheck());
                     btLampkaBezoporowaB.Turn(
-                        ( true == tmp->MoverParameters->ResistorsFlagCheck() )
-                     || ( tmp->MoverParameters->MainCtrlActualPos == 0 ) ); // do EU04
+                        ( true == mover->ResistorsFlagCheck() )
+                     || ( mover->MainCtrlActualPos == 0 ) ); // do EU04
 
-                    if( ( tmp->MoverParameters->Itot != 0 )
-                     || ( tmp->MoverParameters->BrakePress > 0.2 )
-                     || ( tmp->MoverParameters->PipePress < 0.36 ) ) {
+                    if( ( mover->StLinFlag )
+                     || ( mover->BrakePress > 2.0 )
+                     || ( mover->PipePress < 0.36 ) ) {
                         btLampkaStycznB.Turn( false );
                     }
-                    else if( tmp->MoverParameters->BrakePress < 0.1 ) {
+                    else if( mover->BrakePress < 1.0 ) {
                         btLampkaStycznB.Turn( true ); // mozna prowadzic rozruch
                     }
                     // hunter-271211: sygnalizacja poslizgu w pierwszym pojezdzie, gdy wystapi w drugim
-                    btLampkaPoslizg.Turn(tmp->MoverParameters->SlippingWheels);
+                    btLampkaPoslizg.Turn(mover->SlippingWheels);
 
-                    btLampkaSprezarkaB.Turn( tmp->MoverParameters->CompressorFlag ); // mutopsitka dziala
-                    btLampkaSprezarkaBOff.Turn( false == tmp->MoverParameters->CompressorFlag );
-                    if ((tmp->MoverParameters->BrakePress >= 0.145f) && (mvControlled->Signalling == true))
-                    {
-                        btLampkaHamowanie2zes.Turn( true );
+                    btLampkaSprezarkaB.Turn( mover->CompressorFlag ); // mutopsitka dziala
+                    btLampkaSprezarkaBOff.Turn( false == mover->CompressorFlag );
+                    if( mvControlled->Signalling == true ) {
+                        if( mover->BrakePress >= 1.45f ) {
+                            btLampkaHamowanie2zes.Turn( true );
+                        }
+                        if( mover->BrakePress < 0.75f ) {
+                            btLampkaHamowanie2zes.Turn( false );
+                        }
                     }
-                    if ((tmp->MoverParameters->BrakePress < 0.075f) || (mvControlled->Signalling == false))
-                    {
+                    else {
                         btLampkaHamowanie2zes.Turn( false );
                     }
-                    btLampkaNadmPrzetwB.Turn( tmp->MoverParameters->ConvOvldFlag ); // nadmiarowy przetwornicy?
-                    btLampkaPrzetwB.Turn( tmp->MoverParameters->ConverterFlag ); // zalaczenie przetwornicy
-                    btLampkaPrzetwBOff.Turn( false == tmp->MoverParameters->ConverterFlag );
-                    btLampkaMalfunctionB.Turn( tmp->MoverParameters->dizel_heat.PA );
+                    btLampkaNadmPrzetwB.Turn( mover->ConvOvldFlag ); // nadmiarowy przetwornicy?
+                    btLampkaPrzetwB.Turn( mover->ConverterFlag ); // zalaczenie przetwornicy
+                    btLampkaPrzetwBOff.Turn( false == mover->ConverterFlag );
+                    btLampkaHVoltageB.Turn( mover->NoVoltRelay && mover->OvervoltageRelay );
+                    btLampkaMalfunctionB.Turn( mover->dizel_heat.PA );
+                    // motor fuse indicator turns on if the fuse was blown in any unit under control
+                    if( mover->Mains ) {
+                        btLampkaNadmSil.Turn( btLampkaNadmSil.GetValue() || mover->FuseFlagCheck() );
+                    }
                 }
                 else // wylaczone
                 {
@@ -5337,6 +5385,7 @@ bool TTrain::Update( double const Deltatime )
                     btLampkaNadmPrzetwB.Turn( false );
                     btLampkaPrzetwB.Turn( false );
                     btLampkaPrzetwBOff.Turn( false );
+                    btLampkaHVoltageB.Turn( false );
                     btLampkaMalfunctionB.Turn( false );
                 }
         }
@@ -5485,25 +5534,15 @@ bool TTrain::Update( double const Deltatime )
 
         //----------
 
-        // przelaczniki
-        // ABu030405 obsluga lampki uniwersalnej:
-        if( btInstrumentLight.Active() ) // w ogóle jest
-            if( InstrumentLightActive ) // załączona
-                switch( InstrumentLightType ) {
-                    case 0:
-                        btInstrumentLight.Turn( mvControlled->Battery || mvControlled->ConverterFlag );
-                        break;
-                    case 1:
-                        btInstrumentLight.Turn( mvControlled->Mains );
-                        break;
-                    case 2:
-                        btInstrumentLight.Turn( mvControlled->ConverterFlag );
-                        break;
-                    default:
-                        btInstrumentLight.Turn( false );
-                }
-            else
-                btInstrumentLight.Turn( false );
+        // lights
+        auto const lightpower { (
+            InstrumentLightType == 0 ? mvControlled->Battery || mvControlled->ConverterFlag :
+            InstrumentLightType == 1 ? mvControlled->Mains :
+            InstrumentLightType == 2 ? mvControlled->ConverterFlag :
+            false ) };
+        btInstrumentLight.Turn( InstrumentLightActive && lightpower );
+        btDashboardLight.Turn( DashboardLightActive && lightpower );
+        btTimetableLight.Turn( TimetableLightActive && lightpower );
 
         // guziki:
         ggMainOffButton.Update();
@@ -5565,6 +5604,8 @@ bool TTrain::Update( double const Deltatime )
         }
         // hunter-091012
         ggInstrumentLightButton.Update();
+        ggDashboardLightButton.Update();
+        ggTimetableLightButton.Update();
         ggCabLightButton.Update();
         ggCabLightDimButton.Update();
         ggBatteryButton.Update();
@@ -6698,6 +6739,8 @@ void TTrain::clear_cab_controls()
         universal.Clear();
     }
     ggInstrumentLightButton.Clear();
+    ggDashboardLightButton.Clear();
+    ggTimetableLightButton.Clear();
     // hunter-091012
     ggCabLightButton.Clear();
     ggCabLightDimButton.Clear();
@@ -6781,6 +6824,8 @@ void TTrain::clear_cab_controls()
     btLampkaHamulecReczny.Clear();
     btLampkaBlokadaDrzwi.Clear();
     btInstrumentLight.Clear();
+    btDashboardLight.Clear();
+    btTimetableLight.Clear();
     btLampkaWentZaluzje.Clear();
     btLampkaDoorLeft.Clear();
     btLampkaDoorRight.Clear();
@@ -6794,6 +6839,7 @@ void TTrain::clear_cab_controls()
     btLampkaRadiotelefon.Clear();
     btLampkaHamienie.Clear();
     btLampkaBrakingOff.Clear();
+    btLampkaED.Clear();
     btLampkaBrakeProfileG.Clear();
     btLampkaBrakeProfileP.Clear();
     btLampkaBrakeProfileR.Clear();
@@ -6803,10 +6849,12 @@ void TTrain::clear_cab_controls()
     btLampkaSprezarkaBOff.Clear();
     btLampkaFuelPumpOff.Clear();
     btLampkaNapNastHam.Clear();
+    btLampkaOporyB.Clear();
     btLampkaStycznB.Clear();
     btLampkaHamowanie1zes.Clear();
     btLampkaHamowanie2zes.Clear();
     btLampkaNadmPrzetwB.Clear();
+    btLampkaHVoltageB.Clear();
     btLampkaForward.Clear();
     btLampkaBackward.Clear();
     // light indicators
@@ -7001,6 +7049,14 @@ void TTrain::set_cab_controls() {
         InstrumentLightActive ?
             1.0 :
             0.0 ) );
+    ggDashboardLightButton.PutValue( (
+        DashboardLightActive ?
+            1.0 :
+            0.0 ) );
+    ggTimetableLightButton.PutValue( (
+        TimetableLightActive ?
+            1.0 :
+            0.0 ) );
     // doors
     // NOTE: we're relying on the cab models to have switches reversed for the rear cab(?)
     ggDoorLeftButton.PutValue( mvOccupied->DoorLeftOpened ? 1.0 : 0.0 );
@@ -7149,6 +7205,7 @@ bool TTrain::initialize_button(cParser &Parser, std::string const &Label, int co
         { "i-resistorsb:", btLampkaOporyB },
         { "i-contactorsb:", btLampkaStycznB },
         { "i-conv_ovldb:", btLampkaNadmPrzetwB },
+        { "i-hvoltageb:", btLampkaHVoltageB },
         { "i-malfunction:", btLampkaMalfunction },
         { "i-malfunctionb:", btLampkaMalfunctionB },
         { "i-forward:", btLampkaForward },
@@ -7163,6 +7220,8 @@ bool TTrain::initialize_button(cParser &Parser, std::string const &Label, int co
         { "i-rearrightlight:", btLampkaRearRightLight },
         { "i-rearleftend:", btLampkaRearLeftEndLight },
         { "i-rearrightend:",  btLampkaRearRightEndLight },
+        { "i-dashboardlight:",  btDashboardLight },
+        { "i-timetablelight:",  btTimetableLight },
         { "i-cablight:", btCabLight }
     };
     auto lookup = lights.find( Label );
@@ -7291,6 +7350,8 @@ bool TTrain::initialize_gauge(cParser &Parser, std::string const &Label, int con
         { "door_signalling_sw:", ggDoorSignallingButton },
         { "nextcurrent_sw:", ggNextCurrentButton },
         { "instrumentlight_sw:", ggInstrumentLightButton },
+        { "dashboardlight_sw:", ggDashboardLightButton },
+        { "timetablelight_sw:", ggTimetableLightButton },
         { "cablight_sw:", ggCabLightButton },
         { "cablightdim_sw:", ggCabLightDimButton },
         { "battery_sw:", ggBatteryButton },

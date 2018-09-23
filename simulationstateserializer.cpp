@@ -67,6 +67,7 @@ state_serializer::deserialize( cParser &Input, scene::scratch_data &Scratchpad )
         std::pair<
             std::string,
             deserializefunction> > functionlist = {
+                { "area",        &state_serializer::deserialize_area },
                 { "atmo",        &state_serializer::deserialize_atmo },
                 { "camera",      &state_serializer::deserialize_camera },
                 { "config",      &state_serializer::deserialize_config },
@@ -105,7 +106,7 @@ state_serializer::deserialize( cParser &Input, scene::scratch_data &Scratchpad )
             lookup->second();
         }
         else {
-            ErrorLog( "Bad scenario: unexpected token \"" + token + "\" encountered in file \"" + Input.Name() + "\" (line " + std::to_string( Input.Line() - 1 ) + ")" );
+            ErrorLog( "Bad scenario: unexpected token \"" + token + "\" defined in file \"" + Input.Name() + "\" (line " + std::to_string( Input.Line() - 1 ) + ")" );
         }
 
         timenow = std::chrono::steady_clock::now();
@@ -122,6 +123,20 @@ state_serializer::deserialize( cParser &Input, scene::scratch_data &Scratchpad )
     if( false == Scratchpad.initialized ) {
         // manually perform scenario initialization
         deserialize_firstinit( Input, Scratchpad );
+    }
+}
+
+void
+state_serializer::deserialize_area( cParser &Input, scene::scratch_data &Scratchpad ) {
+    // first parameter specifies name of parent piece...
+    auto token { Input.getToken<std::string>() };
+    auto *groupowner { TIsolated::Find( token ) };
+    // ...followed by list of its children
+    while( ( false == ( token = Input.getToken<std::string>() ).empty() )
+        && ( token != "endarea" ) ) {
+        // bind the children with their parent
+        auto *isolated { TIsolated::Find( token ) };
+        isolated->parent( groupowner );
     }
 }
 
@@ -229,15 +244,14 @@ void
 state_serializer::deserialize_event( cParser &Input, scene::scratch_data &Scratchpad ) {
 
     // TODO: refactor event class and its de/serialization. do offset and rotation after deserialization is done
-    auto *event = new TEvent();
-    Math3D::vector3 offset = (
-        Scratchpad.location.offset.empty() ?
-            Math3D::vector3() :
-            Math3D::vector3(
-                Scratchpad.location.offset.top().x,
-                Scratchpad.location.offset.top().y,
-                Scratchpad.location.offset.top().z ) );
-    event->Load( &Input, offset );
+    auto *event = make_event( Input, Scratchpad );
+    if( event == nullptr ) {
+        // something went wrong at initial stage, move on
+        skip_until( Input, "endevent" );
+        return;
+    }
+
+    event->deserialize( Input, Scratchpad );
 
     if( true == simulation::Events.insert( event ) ) {
         scene::Groups.insert( scene::Groups.handle(), event );
@@ -302,7 +316,7 @@ state_serializer::deserialize_node( cParser &Input, scene::scratch_data &Scratch
 
         if( false == simulation::Vehicles.insert( vehicle ) ) {
 
-            ErrorLog( "Bad scenario: vehicle with duplicate name \"" + vehicle->name() + "\" encountered in file \"" + Input.Name() + "\" (line " + std::to_string( inputline ) + ")" );
+            ErrorLog( "Bad scenario: duplicate vehicle name \"" + vehicle->name() + "\" defined in file \"" + Input.Name() + "\" (line " + std::to_string( inputline ) + ")" );
         }
 
         if( ( vehicle->MoverParameters->CategoryFlag == 1 ) // trains only
@@ -316,7 +330,7 @@ state_serializer::deserialize_node( cParser &Input, scene::scratch_data &Scratch
         auto *path { deserialize_path( Input, Scratchpad, nodedata ) };
         // duplicates of named tracks are currently experimentally allowed
         if( false == simulation::Paths.insert( path ) ) {
-            ErrorLog( "Bad scenario: track with duplicate name \"" + path->name() + "\" encountered in file \"" + Input.Name() + "\" (line " + std::to_string( inputline ) + ")" );
+            ErrorLog( "Bad scenario: duplicate track name \"" + path->name() + "\" defined in file \"" + Input.Name() + "\" (line " + std::to_string( inputline ) + ")" );
 /*
             delete path;
             delete pathnode;
@@ -332,7 +346,7 @@ state_serializer::deserialize_node( cParser &Input, scene::scratch_data &Scratch
         if( traction == nullptr ) { return; }
 
         if( false == simulation::Traction.insert( traction ) ) {
-            ErrorLog( "Bad scenario: traction piece with duplicate name \"" + traction->name() + "\" encountered in file \"" + Input.Name() + "\" (line " + std::to_string( inputline ) + ")" );
+            ErrorLog( "Bad scenario: duplicate traction piece name \"" + traction->name() + "\" defined in file \"" + Input.Name() + "\" (line " + std::to_string( inputline ) + ")" );
         }
         scene::Groups.insert( scene::Groups.handle(), traction );
         simulation::Region->insert_and_register( traction );
@@ -344,7 +358,7 @@ state_serializer::deserialize_node( cParser &Input, scene::scratch_data &Scratch
         if( powersource == nullptr ) { return; }
 
         if( false == simulation::Powergrid.insert( powersource ) ) {
-            ErrorLog( "Bad scenario: power grid source with duplicate name \"" + powersource->name() + "\" encountered in file \"" + Input.Name() + "\" (line " + std::to_string( inputline ) + ")" );
+            ErrorLog( "Bad scenario: duplicate power grid source name \"" + powersource->name() + "\" defined in file \"" + Input.Name() + "\" (line " + std::to_string( inputline ) + ")" );
         }
 /*
         // TODO: implement this
@@ -393,7 +407,7 @@ state_serializer::deserialize_node( cParser &Input, scene::scratch_data &Scratch
             if( instance == nullptr ) { return; }
 
             if( false == simulation::Instances.insert( instance ) ) {
-                ErrorLog( "Bad scenario: 3d model instance with duplicate name \"" + instance->name() + "\" encountered in file \"" + Input.Name() + "\" (line " + std::to_string( inputline ) + ")" );
+                ErrorLog( "Bad scenario: duplicate 3d model instance name \"" + instance->name() + "\" defined in file \"" + Input.Name() + "\" (line " + std::to_string( inputline ) + ")" );
             }
             scene::Groups.insert( scene::Groups.handle(), instance );
             simulation::Region->insert( instance );
@@ -436,7 +450,7 @@ state_serializer::deserialize_node( cParser &Input, scene::scratch_data &Scratch
 
         auto *memorycell { deserialize_memorycell( Input, Scratchpad, nodedata ) };
         if( false == simulation::Memory.insert( memorycell ) ) {
-            ErrorLog( "Bad scenario: memory memorycell with duplicate name \"" + memorycell->name() + "\" encountered in file \"" + Input.Name() + "\" (line " + std::to_string( inputline ) + ")" );
+            ErrorLog( "Bad scenario: duplicate memory cell name \"" + memorycell->name() + "\" defined in file \"" + Input.Name() + "\" (line " + std::to_string( inputline ) + ")" );
         }
         scene::Groups.insert( scene::Groups.handle(), memorycell );
         simulation::Region->insert( memorycell );
@@ -445,7 +459,7 @@ state_serializer::deserialize_node( cParser &Input, scene::scratch_data &Scratch
 
         auto *eventlauncher { deserialize_eventlauncher( Input, Scratchpad, nodedata ) };
         if( false == simulation::Events.insert( eventlauncher ) ) {
-            ErrorLog( "Bad scenario: event launcher with duplicate name \"" + eventlauncher->name() + "\" encountered in file \"" + Input.Name() + "\" (line " + std::to_string( inputline ) + ")" );
+            ErrorLog( "Bad scenario: duplicate event launcher name \"" + eventlauncher->name() + "\" defined in file \"" + Input.Name() + "\" (line " + std::to_string( inputline ) + ")" );
         }
             // event launchers can be either global, or local with limited range of activation
             // each gets assigned different caretaker
@@ -461,7 +475,7 @@ state_serializer::deserialize_node( cParser &Input, scene::scratch_data &Scratch
 
         auto *sound { deserialize_sound( Input, Scratchpad, nodedata ) };
         if( false == simulation::Sounds.insert( sound ) ) {
-            ErrorLog( "Bad scenario: sound node with duplicate name \"" + sound->name() + "\" encountered in file \"" + Input.Name() + "\" (line " + std::to_string( inputline ) + ")" );
+            ErrorLog( "Bad scenario: duplicate sound node name \"" + sound->name() + "\" defined in file \"" + Input.Name() + "\" (line " + std::to_string( inputline ) + ")" );
         }
         simulation::Region->insert( sound );
     }
@@ -540,6 +554,10 @@ state_serializer::deserialize_time( cParser &Input, scene::scratch_data &Scratch
         auto timenow = std::time( 0 );
         auto const *localtime = std::localtime( &timenow );
         Global.ScenarioTimeOffset = ( ( localtime->tm_hour * 60 + localtime->tm_min ) - ( time.wHour * 60 + time.wMinute ) ) / 60.f;
+    }
+    else if( false == std::isnan( Global.ScenarioTimeOverride ) ) {
+        // scenario time override takes precedence over scenario time offset
+        Global.ScenarioTimeOffset = ( ( Global.ScenarioTimeOverride * 60 ) - ( time.wHour * 60 + time.wMinute ) ) / 60.f;
     }
 
     // remaining sunrise and sunset parameters are no longer used, as they're now calculated dynamically

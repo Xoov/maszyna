@@ -85,6 +85,7 @@ class TTrain
         std::uint8_t recorder_braking;
         std::uint8_t recorder_power;
         std::uint8_t alerter_sound;
+        std::uint8_t coupled_hv_voltage_relays;
         float velocity;
         float reservoir_pressure;
         float pipe_pressure;
@@ -296,6 +297,8 @@ class TTrain
     static void OnCommand_instrumentlighttoggle( TTrain *Train, command_data const &Command );
     static void OnCommand_instrumentlightenable( TTrain *Train, command_data const &Command );
     static void OnCommand_instrumentlightdisable( TTrain *Train, command_data const &Command );
+    static void OnCommand_dashboardlighttoggle( TTrain *Train, command_data const &Command );
+    static void OnCommand_timetablelighttoggle( TTrain *Train, command_data const &Command );
     static void OnCommand_doorlocktoggle( TTrain *Train, command_data const &Command );
     static void OnCommand_doortoggleleft( TTrain *Train, command_data const &Command );
     static void OnCommand_doortoggleright( TTrain *Train, command_data const &Command );
@@ -416,6 +419,8 @@ public: // reszta może by?publiczna
     std::array<TGauge, 10> ggUniversals; // NOTE: temporary arrangement until we have dynamically built control table
 
     TGauge ggInstrumentLightButton;
+    TGauge ggDashboardLightButton;
+    TGauge ggTimetableLightButton;
     TGauge ggCabLightButton; // hunter-091012: przelacznik oswietlania kabiny
     TGauge ggCabLightDimButton; // hunter-091012: przelacznik przyciemnienia
     TGauge ggBatteryButton; // Stele 161228 hebelek baterii
@@ -459,13 +464,13 @@ public: // reszta może by?publiczna
     TButton btLampkaNadmPrzetw;
     TButton btLampkaPrzetw;
     TButton btLampkaPrzetwOff;
-    TButton btLampkaPrzekRozn;
-    TButton btLampkaPrzekRoznPom;
+    TButton btLampkaPrzekRozn; // TODO: implement
+    TButton btLampkaPrzekRoznPom; // TODO: implement
     TButton btLampkaNadmSil;
     TButton btLampkaWylSzybki;
     TButton btLampkaWylSzybkiOff;
     TButton btLampkaNadmWent;
-    TButton btLampkaNadmSpr;
+    TButton btLampkaNadmSpr; // TODO: implement
     // yB: drugie lampki dla EP05 i ET42
     TButton btLampkaOporyB;
     TButton btLampkaStycznB;
@@ -474,6 +479,7 @@ public: // reszta może by?publiczna
     TButton btLampkaNadmPrzetwB;
     TButton btLampkaPrzetwB;
     TButton btLampkaPrzetwBOff;
+    TButton btLampkaHVoltageB; // TODO: implement
     // KURS90 lampki jazdy bezoporowej dla EU04
     TButton btLampkaBezoporowaB;
     TButton btLampkaBezoporowa;
@@ -486,9 +492,13 @@ public: // reszta może by?publiczna
     TButton btLampkaOpory;
     TButton btLampkaWysRozr;
     TButton btInstrumentLight;
-    int InstrumentLightType; // ABu 030405 - swiecenie uzaleznione od: 0-nic, 1-obw.gl, 2-przetw.
-    bool InstrumentLightActive;
-    TButton btLampkaWentZaluzje; // ET22
+    TButton btDashboardLight;
+    TButton btTimetableLight;
+    int InstrumentLightType{ 0 }; // ABu 030405 - swiecenie uzaleznione od: 0-nic, 1-obw.gl, 2-przetw.
+    bool InstrumentLightActive{ false };
+    bool DashboardLightActive{ false };
+    bool TimetableLightActive{ false };
+    TButton btLampkaWentZaluzje; // ET22 // TODO: implement
     TButton btLampkaOgrzewanieSkladu;
     TButton btLampkaSHP;
     TButton btLampkaCzuwaka; // McZapkie-141102
@@ -504,7 +514,7 @@ public: // reszta może by?publiczna
     TButton btLampkaBocznik2;
     TButton btLampkaBocznik3;
     TButton btLampkaBocznik4;
-    TButton btLampkaRadiotelefon;
+    TButton btLampkaRadiotelefon; // TODO: implement
     TButton btLampkaHamienie;
     TButton btLampkaBrakingOff;
     TButton btLampkaED; // Stele 161228 hamowanie elektrodynamiczne

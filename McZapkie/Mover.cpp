@@ -278,21 +278,14 @@ double TMoverParameters::Current(double n, double U)
 // *************************************************************************************************
 //  główny konstruktor
 // *************************************************************************************************
-TMoverParameters::TMoverParameters(double VelInitial, std::string TypeNameInit,
-                                   std::string NameInit, int LoadInitial,
-                                   std::string LoadTypeInitial,
-                                   int Cab) ://: T_MoverParameters(VelInitial, TypeNameInit,
-                                            //NameInit, LoadInitial, LoadTypeInitial, Cab)
+TMoverParameters::TMoverParameters(double VelInitial, std::string TypeNameInit, std::string NameInit, int Cab) :
 TypeName( TypeNameInit ),
 Name( NameInit ),
-ActiveCab( Cab ),
-Load( LoadInitial ),
-LoadType( LoadTypeInitial )
+ActiveCab( Cab )
 {
     WriteLog(
         "------------------------------------------------------");
-    WriteLog("init default physic values for " + NameInit + ", [" + TypeNameInit + "], [" +
-             LoadTypeInitial + "]");
+    WriteLog("init default physic values for " + NameInit + ", [" + TypeNameInit + "]");
     Dim = TDimension();
 
     // BrakeLevelSet(-2); //Pascal ustawia na 0, przestawimy na odcięcie (CHK jest jeszcze nie wczytane!)
@@ -354,10 +347,6 @@ LoadType( LoadTypeInitial )
     }
 	eimc[eimc_p_eped] = 1.5;
 
-    // inicjalizacja zmiennych}
-    // Loc:=LocInitial; //Ra: to i tak trzeba potem przesunąć, po ustaleniu pozycji na torze
-    // (potrzebna długość)
-    // Rot:=RotInitial;
     for (int b = 0; b < 2; ++b)
     {
         Couplers[b].AllowedFlag = 3; // domyślnie hak i hamulec, inne trzeba włączyć jawnie w FIZ
@@ -409,20 +398,6 @@ LoadType( LoadTypeInitial )
     SecuritySystem.RadioStop = false; // domyślnie nie ma
     SecuritySystem.AwareMinSpeed = 0.1 * Vmax;
     s_CAtestebrake = false;
-    // ABu 240105:
-    // CouplerNr[0]:=1;
-    // CouplerNr[1]:=0;
-
-    // TO POTEM TU UAKTYWNIC A WYWALIC Z CHECKPARAM}
-    //{
-    //  if Pos(LoadTypeInitial,LoadAccepted)>0 then
-    //   begin
-    //}
-
-    //{
-    //   end
-    //  else Load:=0;
-    // }
 };
 
 double TMoverParameters::Distance(const TLocation &Loc1, const TLocation &Loc2,
@@ -1255,6 +1230,7 @@ double TMoverParameters::ComputeMovement(double dt, double dt1, const TTrackShap
             OffsetTrackH = Sign(RunningShape.R) * 0.2;
         }
 
+    // TODO: investigate, seems supplied NewRot is always 0 although the code here suggests some actual values are expected
     Loc = NewLoc;
     Rot = NewRot;
     NewRot.Rx = 0;
@@ -2582,6 +2558,8 @@ bool TMoverParameters::MainSwitch( bool const State, range_t const Notify )
         if( ( false == State )
          || ( ( ( ScndCtrlPos == 0 ) || ( EngineType == TEngineType::ElectricInductionMotor ) )
            && ( ( ConvOvldFlag == false ) || ( TrainType == dt_EZT ) )
+           && ( true == NoVoltRelay )
+           && ( true == OvervoltageRelay )
            && ( LastSwitchingTime > CtrlDelay )
            && ( false == TestFlag( DamageFlag, dtrain_out ) )
            && ( false == TestFlag( EngDmgFlag, 1 ) ) ) ) {
@@ -3755,27 +3733,25 @@ void TMoverParameters::ComputeConstans(void)
 // *************************************************************************************************
 double TMoverParameters::ComputeMass(void)
 {
-    double M;
-	LoadType = ToLower(LoadType); // po co zakładać jak można mieć na pewno
-    if (Load > 0)
-    { // zakładamy, że ładunek jest pisany małymi literami
+    double M { 0.0 };
+    // TODO: unit weight table, pulled from external data file
+    if( LoadAmount > 0 ) {
+
         if (ToLower(LoadQuantity) == "tonns")
-            M = Load * 1000;
-        else if (LoadType == "passengers")
-            M = Load * 80;
-        else if (LoadType == "luggage")
-            M = Load * 100;
-        else if (LoadType == "cars")
-            M = Load * 1200; // 800 kilo to miał maluch
-        else if (LoadType == "containers")
-            M = Load * 8000;
-        else if (LoadType == "transformers")
-            M = Load * 50000;
+            M = LoadAmount * 1000;
+        else if (LoadType.name == "passengers")
+            M = LoadAmount * 80;
+        else if (LoadType.name == "luggage")
+            M = LoadAmount * 100;
+        else if (LoadType.name == "cars")
+            M = LoadAmount * 1200; // 800 kilo to miał maluch
+        else if (LoadType.name == "containers")
+            M = LoadAmount * 8000;
+        else if (LoadType.name == "transformers")
+            M = LoadAmount * 50000;
         else
-            M = Load * 1000;
+            M = LoadAmount * 1000;
     }
-    else
-        M = 0;
     // Ra: na razie tak, ale nie wszędzie masy wirujące się wliczają
     return Mass + M + Mred;
 }
@@ -4452,6 +4428,32 @@ double TMoverParameters::TractionForce( double dt ) {
         }
     }
 
+    switch( EngineType ) {
+
+        case TEngineType::ElectricSeriesMotor: {
+/*
+			if ((Mains)) // nie wchodzić w funkcję bez potrzeby
+				if ( (std::max(GetTrainsetVoltage(), std::abs(Voltage)) < EnginePowerSource.CollectorParameters.MinV) ||
+					(std::max(GetTrainsetVoltage(), std::abs(Voltage)) * EnginePowerSource.CollectorParameters.OVP >
+						EnginePowerSource.CollectorParameters.MaxV))
+                        if( MainSwitch( false, ( TrainType == dt_EZT ? range_t::unit : range_t::local ) ) ) // TODO: check whether we need to send this EMU-wide
+						EventFlag = true; // wywalanie szybkiego z powodu niewłaściwego napięcia
+*/
+            // update the state of voltage relays
+            auto const voltage { std::max( GetTrainsetVoltage(), std::abs( RunningTraction.TractionVoltage ) ) };
+            NoVoltRelay = ( voltage >= EnginePowerSource.CollectorParameters.MinV );
+            OvervoltageRelay = ( voltage <= EnginePowerSource.CollectorParameters.MaxV ) || ( false == EnginePowerSource.CollectorParameters.OVP );
+            // wywalanie szybkiego z powodu niewłaściwego napięcia
+            EventFlag |= ( ( true == Mains )
+                        && ( ( false == NoVoltRelay ) || ( false == OvervoltageRelay ) )
+                        && ( MainSwitch( false, ( TrainType == dt_EZT ? range_t::unit : range_t::local ) ) ) ); // TODO: check whether we need to send this EMU-wide
+            break;
+        }
+        default: {
+            break;
+        }
+    }
+
     if (ActiveDir != 0)
         switch (EngineType)
         {
@@ -4531,13 +4533,6 @@ double TMoverParameters::TractionForce( double dt ) {
                 Vhyp = 0;
             if (Vhyp > CtrlDelay / 2) // jesli czas oddzialywania przekroczony
                 FuseOff(); // wywalanie bezpiecznika z powodu przetezenia silnikow
-
-			if ((Mains)) // nie wchodzić w funkcję bez potrzeby
-				if ( (std::max(GetTrainsetVoltage(), std::abs(Voltage)) < EnginePowerSource.CollectorParameters.MinV) ||
-					(std::max(GetTrainsetVoltage(), std::abs(Voltage)) * EnginePowerSource.CollectorParameters.OVP >
-						EnginePowerSource.CollectorParameters.MaxV))
-                        if( MainSwitch( false, ( TrainType == dt_EZT ? range_t::unit : range_t::local ) ) ) // TODO: check whether we need to send this EMU-wide
-						EventFlag = true; // wywalanie szybkiego z powodu niewłaściwego napięcia
 
             if (((DynamicBrakeType == dbrake_automatic) || (DynamicBrakeType == dbrake_switch)) && (DynamicBrakeFlag))
                 Itot = Im * 2; // 2x2 silniki w EP09
@@ -5161,7 +5156,7 @@ double TMoverParameters::ComputeRotatingWheel(double WForce, double dt, double n
 // Q: 20160713
 // Sprawdzenie bezpiecznika nadmiarowego
 // *************************************************************************************************
-bool TMoverParameters::FuseFlagCheck(void)
+bool TMoverParameters::FuseFlagCheck(void) const
 {
     bool FFC;
 
@@ -5353,7 +5348,7 @@ bool TMoverParameters::MinCurrentSwitch(bool State)
 // Q: 20160713
 // Sprawdzenie wskaźnika jazdy na oporach
 // *************************************************************************************************
-bool TMoverParameters::ResistorsFlagCheck(void)
+bool TMoverParameters::ResistorsFlagCheck(void) const
 {
     bool RFC = false;
 
@@ -5974,8 +5969,9 @@ bool TMoverParameters::dizel_Update(double dt) {
         dizel_startup = false;
         dizel_ignition = false;
         // TODO: split engine and main circuit state indicator in two separate flags
-        Mains = true;
         LastSwitchingTime = 0;
+        Mains = true;
+        dizel_spinup = true;
         enrot = std::max(
             enrot,
             0.35 * ( // TODO: dac zaleznie od temperatury i baterii
@@ -5984,6 +5980,14 @@ bool TMoverParameters::dizel_Update(double dt) {
                     DElist[ 0 ].RPM / 60.0 ) );
 
     }
+
+    dizel_spinup = (
+        dizel_spinup
+        && Mains
+        && ( enrot < 0.95 * (
+            EngineType == TEngineType::DieselEngine ?
+                dizel_nmin :
+                DElist[ 0 ].RPM / 60.0 ) ) );
 
     if( ( true == Mains )
      && ( false == FuelPump.is_active ) ) {
@@ -6105,7 +6109,7 @@ double TMoverParameters::dizel_Momentum(double dizel_fill, double n, double dt)
         // wstrzymywanie przy malych obrotach
         Moment -= dizel_Mstand;
     }
-	if (true == dizel_ignition)
+	if (true == dizel_spinup)
 		Moment += dizel_Mstand / (0.3 + std::max(0.0, enrot/dizel_nmin)); //rozrusznik
 
 	dizel_Torque = Moment;
@@ -6216,11 +6220,10 @@ double TMoverParameters::dizel_Momentum(double dizel_fill, double n, double dt)
 	}
 
 
-	if ((enrot <= 0) && (!dizel_ignition))
-	{
-		Mains = false;
-		enrot = 0;
-	}
+    if( ( enrot <= 0 ) && ( false == dizel_spinup ) ) {
+        MainSwitch( false );
+        enrot = 0;
+    }
 
 	dizel_n_old = n; //obecna predkosc katowa na potrzeby kolejnej klatki
 
@@ -6428,58 +6431,105 @@ void TMoverParameters::dizel_Heat( double const dt ) {
 */
 }
 
+bool
+TMoverParameters::AssignLoad( std::string const &Name, float const Amount ) {
+
+    if( Name == "pantstate" ) {
+        if( EnginePowerSource.SourceType == TPowerSource::CurrentCollector ) {
+            // wartość niby "pantstate" - nazwa dla formalności, ważna jest ilość
+            auto const pantographsetup { static_cast<int>( Amount ) };
+            if( pantographsetup & ( 1 << 2 ) ) {
+                DoubleTr = -1;
+            }
+            if( pantographsetup & ( 1 << 0 ) ) {
+                if( DoubleTr == 1 ) { PantFront( true ); }
+                else                { PantRear( true ); }
+            }
+            if( pantographsetup & ( 1 << 1 ) ) {
+                if( DoubleTr == 1 ) { PantRear( true ); }
+                else                { PantFront( true ); }
+            }
+            return true;
+        }
+        else {
+            return false;
+        }
+    }
+
+    // can't mix load types, at least for the time being
+    if( ( LoadAmount > 0 ) && ( LoadType.name != Name ) ) { return false; }
+
+    if( Name.empty() ) {
+        // empty the vehicle
+        LoadType = load_attributes();
+        LoadAmount = 0.f;
+        return true;
+    }
+
+    for( auto const &loadattributes : LoadAttributes ) {
+        if( Name == loadattributes.name ) {
+            LoadType = loadattributes;
+            LoadAmount = Amount;
+            return true;
+        }
+    }
+    // didn't find matching load configuration, this type is unsupported
+    return false;
+}
+
 // *************************************************************************************************
 // Q: 20160713
 // Test zakończenia załadunku / rozładunku
 // *************************************************************************************************
-bool TMoverParameters::LoadingDone(double LSpeed, std::string LoadInit)
-{
-    // test zakończenia załadunku/rozładunku
-    long LoadChange = 0;
-    bool LD = false;
+bool TMoverParameters::LoadingDone(double const LSpeed, std::string const &Loadname) {
 
-    // ClearPendingExceptions; // zabezpieczenie dla Trunc()
-    // LoadingDone:=false; //nie zakończone
-    if (!LoadInit.empty()) // nazwa ładunku niepusta
-    {
-        if (Load > MaxLoad)
-            LoadChange = abs(long(LSpeed * LastLoadChangeTime / 2.0)); // przeładowanie?
-        else
-            LoadChange = abs(long(LSpeed * LastLoadChangeTime));
-        if (LSpeed < 0) // gdy rozładunek
-        {
-            LoadStatus = 2; // trwa rozładunek (włączenie naliczania czasu)
-            if (LoadChange != 0) // jeśli coś przeładowano
-            {
-                LastLoadChangeTime = 0; // naliczony czas został zużyty
-                Load -= LoadChange; // zmniejszenie ilości ładunku
-                CommandIn.Value1 =
-                    CommandIn.Value1 - LoadChange; // zmniejszenie ilości do rozładowania
-                if (Load < 0)
-                    Load = 0; //ładunek nie może być ujemny
-                if ((Load == 0) || (CommandIn.Value1 < 0)) // pusto lub rozładowano żądaną ilość
-                    LoadStatus = 4; // skończony rozładunek
-                if (Load == 0)
-                    LoadType.clear(); // jak nic nie ma, to nie ma też nazwy
-            }
-        }
-        else if (LSpeed > 0) // gdy załadunek
-        {
-            LoadStatus = 1; // trwa załadunek (włączenie naliczania czasu)
-            if (LoadChange != 0) // jeśli coś przeładowano
-            {
-                LastLoadChangeTime = 0; // naliczony czas został zużyty
-                LoadType = LoadInit; // nazwa
-                Load += LoadChange; // zwiększenie ładunku
-                CommandIn.Value1 = CommandIn.Value1 - LoadChange;
-                if ((Load >= MaxLoad * (1.0 + OverLoadFactor)) || (CommandIn.Value1 < 0))
-                    LoadStatus = 4; // skończony załadunek
-            }
-        }
-        else
-            LoadStatus = 4; // zerowa prędkość zmiany, to koniec
+    if( LSpeed == 0.0 ) {
+        // zerowa prędkość zmiany, to koniec
+        LoadStatus = 4;
+        return true;
     }
-    return (LoadStatus >= 4);
+
+    if( Loadname.empty() )             { return ( LoadStatus >= 4 ); } 
+    if( Loadname != LoadType.name ) { return ( LoadStatus >= 4 ); }
+
+    // test zakończenia załadunku/rozładunku
+    // load exchange speed is reduced if the wagon is overloaded
+    auto const loadchange { static_cast<float>( std::abs( LSpeed * LastLoadChangeTime ) * ( LoadAmount > MaxLoad ? 0.5 : 1.0 ) ) };
+
+    if( LSpeed < 0 ) {
+        // gdy rozładunek
+        LoadStatus = 2; // trwa rozładunek (włączenie naliczania czasu)
+        if( loadchange > 0 ) // jeśli coś przeładowano
+        {
+            LastLoadChangeTime = 0; // naliczony czas został zużyty
+            LoadAmount -= loadchange; // zmniejszenie ilości ładunku
+            CommandIn.Value1 -= loadchange; // zmniejszenie ilości do rozładowania
+            if( ( LoadAmount <= 0 ) || ( CommandIn.Value1 <= 0 ) ) {
+                // pusto lub rozładowano żądaną ilość
+                LoadStatus = 4; // skończony rozładunek
+                LoadAmount = std::max( 0.f, LoadAmount ); //ładunek nie może być ujemny
+            }
+            if( LoadAmount == 0.f ) {
+                AssignLoad(""); // jak nic nie ma, to nie ma też nazwy
+            }
+        }
+    }
+    else if( LSpeed > 0 ) {
+        // gdy załadunek
+        LoadStatus = 1; // trwa załadunek (włączenie naliczania czasu)
+        if( loadchange > 0 ) // jeśli coś przeładowano
+        {
+            LastLoadChangeTime = 0; // naliczony czas został zużyty
+            LoadAmount += loadchange; // zwiększenie ładunku
+            CommandIn.Value1 -= loadchange;
+            if( ( LoadAmount >= MaxLoad * ( 1.0 + OverLoadFactor ) ) || ( CommandIn.Value1 <= 0 ) ) {
+                LoadStatus = 4; // skończony załadunek
+                LoadAmount = std::min<float>( MaxLoad * ( 1.0 + OverLoadFactor ), LoadAmount );
+            }
+        }
+    }
+
+    return ( LoadStatus >= 4 );
 }
 
 // *************************************************************************************************
@@ -7563,19 +7613,30 @@ void TMoverParameters::LoadFIZ_Param( std::string const &line ) {
 
 void TMoverParameters::LoadFIZ_Load( std::string const &line ) {
 
-    extract_value( LoadAccepted, "LoadAccepted", line, "" );
-    if( true == LoadAccepted.empty() ) {
-        return;
+    auto const acceptedloads { Split( extract_value( "LoadAccepted", line ), ',' ) };
+
+    if( acceptedloads.empty() ) { return; }
+
+    auto const minoffsets { Split( extract_value( "LoadMinOffset", line ), ',' ) };
+    auto minoffset { 0.f };
+    auto minoffsetsiterator { std::begin( minoffsets ) };
+    // NOTE: last (if any) offset parameter retrieved from the list applies to the remainder of the list
+    // TBD, TODO: include other load parameters in this system
+    for( auto &load : acceptedloads ) {
+        if( minoffsetsiterator != std::end( minoffsets ) ) {
+            minoffset = std::stof( *minoffsetsiterator );
+            ++minoffsetsiterator;
+        }
+        LoadAttributes.emplace_back(
+            ToLower( load ),
+            minoffset );
     }
-    LoadAccepted = ToLower( LoadAccepted );
 
     extract_value( MaxLoad, "MaxLoad", line, "" );
     extract_value( LoadQuantity, "LoadQ", line, "" );
     extract_value( OverLoadFactor, "OverLoadFactor", line, "" );
     extract_value( LoadSpeed, "LoadSpeed", line, "" );
     extract_value( UnLoadSpeed, "UnLoadSpeed", line, "" );
-
-    extract_value( LoadMinOffset, "LoadMinOffset", line, "" );
 }
 
 void TMoverParameters::LoadFIZ_Dimensions( std::string const &line ) {
@@ -8492,15 +8553,14 @@ void TMoverParameters::LoadFIZ_PowerParamsDecode( TPowerParameters &Powerparamet
 
             auto &collectorparameters = Powerparameters.CollectorParameters;
 
+            collectorparameters = TCurrentCollector { 0, 0, 0, 0, 0, 0, false, 0, 0, 0 };
+
             extract_value( collectorparameters.CollectorsNo, "CollectorsNo", Line, "" );
             extract_value( collectorparameters.MinH, "MinH", Line, "" );
             extract_value( collectorparameters.MaxH, "MaxH", Line, "" );
             extract_value( collectorparameters.CSW, "CSW", Line, "" ); //szerokość części roboczej
             extract_value( collectorparameters.MaxV, "MaxVoltage", Line, "" );
-            collectorparameters.OVP = //przekaźnik nadnapięciowy
-                extract_value( "OverVoltProt", Line ) == "Yes" ?
-                    1 :
-                    0;
+            extract_value( collectorparameters.OVP, "OverVoltProt", Line, "" ); //przekaźnik nadnapięciowy
             //napięcie rozłączające WS
             collectorparameters.MinV = 0.5 * collectorparameters.MaxV; //gdyby parametr nie podany
             extract_value( collectorparameters.MinV, "MinV", Line, "" );
@@ -8620,11 +8680,6 @@ bool TMoverParameters::CheckLocomotiveParameters(bool ReadyFlag, int Dir)
         // test poprawnosci ilosci osi indywidualnie napedzanych
         OK = ( ( RList[ 1 ].Bn * RList[ 1 ].Mn ) == NPoweredAxles );
         // WriteLogSS("aa ok", BoolToYN(OK));
-    }
-
-    if( ( LoadType.empty() == false ) && ( LoadAccepted.find( LoadType ) == std::string::npos ) ) {
-        // remove load if the type isn't supported
-        Load = 0.0;
     }
 
 	if (BrakeSystem == TBrakeSystem::Individual)
@@ -8860,16 +8915,16 @@ bool TMoverParameters::CheckLocomotiveParameters(bool ReadyFlag, int Dir)
 
     if( LoadFlag > 0 ) {
 
-        if( Load < MaxLoad * 0.45 ) {
+        if( LoadAmount < MaxLoad * 0.45 ) {
             IncBrakeMult();
             IncBrakeMult();
             DecBrakeMult(); // TODO: przeinesiono do mover.cpp
-            if( Load < MaxLoad * 0.35 )
+            if( LoadAmount < MaxLoad * 0.35 )
                 DecBrakeMult();
         }
         else {
             IncBrakeMult(); // TODO: przeinesiono do mover.cpp
-            if( Load >= MaxLoad * 0.55 )
+            if( LoadAmount >= MaxLoad * 0.55 )
                 IncBrakeMult();
         }
     }
@@ -9450,39 +9505,44 @@ bool TMoverParameters::RunCommand( std::string Command, double CValue1, double C
 		OK = true; // true, gdy można usunąć komendę
 	}
 	/*naladunek/rozladunek*/
-	else if ( issection( "Load=", Command ) )
+    // TODO: have these commands leverage load exchange system instead
+    else if ( issection( "Load=", Command ) )
 	{
 		OK = false; // będzie powtarzane aż się załaduje
-        if( ( Vel < 0.01 )
+        if( ( Vel < 0.1 ) // tolerance margin for small vehicle movements in the consist
          && ( MaxLoad > 0 )
-         && ( Load < MaxLoad * ( 1.0 + OverLoadFactor ) ) ) {
-            // czy można ładowac?
-            if( Distance( Loc, CommandIn.Location, Dim, Dim ) < 10 ) {
-                // ten peron/rampa
-                auto const testload { ToLower( extract_value( "Load", Command ) ) };
-                if( LoadAccepted.find( testload ) != std::string::npos ) // nazwa jest obecna w CHK
-                    OK = LoadingDone( Min0R( CValue2, LoadSpeed ), testload ); // zmienia LoadStatus
+         && ( LoadAmount < MaxLoad * ( 1.0 + OverLoadFactor ) )
+         && ( Distance( Loc, CommandIn.Location, Dim, Dim ) < 10 ) ) { // ten peron/rampa
+
+            auto const loadname { ToLower( extract_value( "Load", Command ) ) };
+            if( LoadAmount == 0.f ) {
+                AssignLoad( loadname );
             }
+            OK = LoadingDone(
+                std::min<float>( CValue2, LoadSpeed ),
+                loadname ); // zmienia LoadStatus
         }
-		// if OK then LoadStatus:=0; //nie udalo sie w ogole albo juz skonczone
+        else {
+            // no loading can be done if conditions aren't met
+            LastLoadChangeTime = 0.0;
+        }
 	}
     else if( issection( "UnLoad=", Command ) )
 	{
 		OK = false; // będzie powtarzane aż się rozładuje
-        if( ( Vel < 0.01 )
-         && ( Load > 0 ) ) {
-            // czy jest co rozladowac?
-            if( Distance( Loc, CommandIn.Location, Dim, Dim ) < 10 ) {
-                // ten peron
-                auto const testload { ToLower( extract_value( "UnLoad", Command ) ) }; // zgodność nazwy ładunku z CHK
-                if( LoadType == testload ) {
-                    /*mozna to rozladowac*/
-                    OK = LoadingDone( -Min0R( CValue2, LoadSpeed ), testload );
-                }
-            }
+        if( ( Vel < 0.1 ) // tolerance margin for small vehicle movements in the consist
+         && ( LoadAmount > 0 )  // czy jest co rozladowac?
+         && ( Distance( Loc, CommandIn.Location, Dim, Dim ) < 10 ) ) { // ten peron
+            /*mozna to rozladowac*/
+            OK = LoadingDone(
+                -1.f * std::min<float>( CValue2, LoadSpeed ),
+                ToLower( extract_value( "UnLoad", Command ) ) );
         }
-		// if OK then LoadStatus:=0;
-	}
+        else {
+            // no loading can be done if conditions aren't met
+            LastLoadChangeTime = 0.0;
+        }
+    }
 	else if (Command == "SpeedCntrl")
 	{
 		if ((EngineType == TEngineType::ElectricInductionMotor))

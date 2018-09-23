@@ -251,9 +251,10 @@ timetable_panel::update() {
                         to_string( int( 100 + tableline->Dh ) ).substr( 1, 2 ) + ":" + to_string( int( 100 + tableline->Dm ) ).substr( 1, 2 ) :
                         "  |  " );
                 auto const candeparture = (
-                    ( owner->iStationStart < table->StationIndex )
+                       ( owner->iStationStart < table->StationIndex )
                     && ( i < table->StationIndex )
-                    && ( ( time.wHour * 60 + time.wMinute ) >= ( tableline->Dh * 60 + tableline->Dm ) ) );
+                    && ( ( tableline->Ah < 0 ) // pass-through, always valid
+                      || ( time.wHour * 60 + time.wMinute >= tableline->Dh * 60 + tableline->Dm ) ) );
                 auto traveltime =
                     "   "
                     + ( i < 2 ? "" :
@@ -384,8 +385,8 @@ debug_panel::update_section_vehicle( std::vector<text_line> &Output ) {
         locale::strings[ locale::string::debug_vehicle_nameloadstatuscouplers ].c_str(),
         mover.Name.c_str(),
         std::string( isowned ? locale::strings[ locale::string::debug_vehicle_owned ].c_str() + vehicle.ctOwner->OwnerName() : "" ).c_str(),
-        mover.Load,
-        mover.LoadType.c_str(),
+        mover.LoadAmount,
+        mover.LoadType.name.c_str(),
         mover.EngineDescription( 0 ).c_str(),
         // TODO: put wheel flat reporting in the enginedescription()
         std::string( mover.WheelFlat > 0.01 ? " Flat: " + to_string( mover.WheelFlat, 1 ) + " mm" : "" ).c_str(),
@@ -683,7 +684,7 @@ debug_panel::update_section_ai( std::vector<text_line> &Output ) {
     if( ( mechanik.VelNext == 0.0 )
      && ( mechanik.eSignNext ) ) {
         // jeśli ma zapamiętany event semafora, nazwa eventu semafora
-        Output.emplace_back( "Current signal: " + Bezogonkow( mechanik.eSignNext->asName ), Global.UITextColor );
+        Output.emplace_back( "Current signal: " + Bezogonkow( mechanik.eSignNext->m_name ), Global.UITextColor );
     }
 
     // distances
@@ -726,7 +727,7 @@ debug_panel::update_section_ai( std::vector<text_line> &Output ) {
     textline =
         "Acceleration:\n desired: " + to_string( mechanik.AccDesired, 2 )
         + ", corrected: " + to_string( mechanik.AccDesired * mechanik.BrakeAccFactor(), 2 )
-        + "\n current: " + to_string( mechanik.AbsAccS_pub, 2 )
+        + "\n current: " + to_string( mechanik.AbsAccS_pub + 0.001f, 2 )
         + ", slope: " + to_string( mechanik.fAccGravity + 0.001f, 2 ) + " (" + ( mechanik.fAccGravity > 0.01 ? "\\" : ( mechanik.fAccGravity < -0.01 ? "/" : "-" ) ) + ")"
         + "\n brake threshold: " + to_string( mechanik.fAccThreshold, 2 )
         + ", delays: " + to_string( mechanik.fBrake_a0[ 0 ], 2 )
@@ -744,7 +745,7 @@ debug_panel::update_section_ai( std::vector<text_line> &Output ) {
     std::vector<std::string> const drivingflagnames {
         "StopCloser", "StopPoint", "Active", "Press", "Connect", "Primary", "Late", "StopHere",
         "StartHorn", "StartHornNow", "StartHornDone", "Oerlikons", "IncSpeed", "TrackEnd", "SwitchFound", "GuardSignal",
-        "Visibility", "DoorOpened", "PushPull", "SemaphorFound", "SemaphorWasElapsed", "TrainInsideStation", "SpeedLimitFound" };
+        "Visibility", "DoorOpened", "PushPull", "SemaphorFound", "StopPointFound" /*"SemaphorWasElapsed", "TrainInsideStation", "SpeedLimitFound"*/ };
 
     textline = "Driving flags:";
     for( int idx = 0, flagbit = 1; idx < drivingflagnames.size(); ++idx, flagbit <<= 1 ) {
@@ -804,19 +805,19 @@ debug_panel::update_section_eventqueue( std::vector<text_line> &Output ) {
                 && ( eventtableindex < 30 ) ) {
 
                 if( ( false == event->m_ignored )
-                 && ( true == event->bEnabled ) ) {
+                 && ( false == event->m_passive ) ) {
 
-                    auto const delay { "   " + to_string( std::max( 0.0, event->fStartTime - time ), 1 ) };
+                    auto const delay { "   " + to_string( std::max( 0.0, event->m_launchtime - time ), 1 ) };
                     textline =
                         "Delay: " + delay.substr( delay.length() - 6 )
-                        + ", Event: " + event->asName
-                        + ( event->Activator ? " (by: " + event->Activator->asName + ")" : "" )
-                        + ( event->evJoined ? " (joint event)" : "" );
+                        + ", Event: " + event->m_name
+                        + ( event->m_activator ? " (by: " + event->m_activator->asName + ")" : "" )
+                        + ( event->m_sibling ? " (joint event)" : "" );
 
                     Output.emplace_back( textline, Global.UITextColor );
                     ++eventtableindex;
                 }
-                event = event->evNext;
+                event = event->m_next;
             }
             if( Output.empty() ) {
                 textline = "(no queued events)";
