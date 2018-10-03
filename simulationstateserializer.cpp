@@ -37,9 +37,11 @@ state_serializer::deserialize( std::string const &Scenariofile ) {
     // TODO: check first for presence of serialized binary files
     // if this fails, fall back on the legacy text format
     scene::scratch_data importscratchpad;
+    importscratchpad.name = Scenariofile;
     if( Scenariofile != "$.scn" ) {
         // compilation to binary file isn't supported for rainsted-created overrides
-        importscratchpad.binary.terrain = Region->deserialize( Scenariofile );
+        // NOTE: we postpone actual loading of the scene until we process time, season and weather data
+        importscratchpad.binary.terrain = Region->is_scene( Scenariofile ) ;
     }
     // NOTE: for the time being import from text format is a given, since we don't have full binary serialization
     cParser scenarioparser( Scenariofile, cParser::buffer_FILE, Global.asCurrentSceneryPath, Global.bLoadTraction );
@@ -160,7 +162,15 @@ state_serializer::deserialize_atmo( cParser &Input, scene::scratch_data &Scratch
     std::string token { Input.getToken<std::string>() };
     if( token != "endatmo" ) {
         // optional overcast parameter
-        Global.Overcast = clamp( std::stof( token ), 0.f, 2.f );
+        Global.Overcast = std::stof( token );
+        if( Global.Overcast < 0.f ) {
+            // negative overcast means random value in range 0-abs(specified range)
+            Global.Overcast =
+                Random(
+                    clamp(
+                        std::abs( Global.Overcast ),
+                        0.f, 2.f ) );
+        }
         // overcast drives weather so do a calculation here
         // NOTE: ugly, clean it up when we're done with world refactoring
         simulation::Environment.compute_weather();
@@ -265,6 +275,12 @@ void
 state_serializer::deserialize_firstinit( cParser &Input, scene::scratch_data &Scratchpad ) {
 
     if( true == Scratchpad.initialized ) { return; }
+
+    if( true == Scratchpad.binary.terrain ) {
+        // at this stage it should be safe to import terrain from the binary scene file
+        // TBD: postpone loading furter and only load required blocks during the simulation?
+        Region->deserialize( Scratchpad.name );
+    }
 
     simulation::Paths.InitTracks();
     simulation::Traction.InitTraction();
